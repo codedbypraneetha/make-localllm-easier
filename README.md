@@ -18,7 +18,8 @@ You also get an OpenAI-compatible API at `http://127.0.0.1:8080/v1` for any app 
 localllm chat       # chat right here in the terminal (Thai, Japanese, any language)
 localllm doctor     # what this GPU is good for: model sizes, speed, how much text it can hold
 localllm list       # every model we have measured, with scores per language
-localllm serve      # API only, no browser
+localllm serve      # API only (OpenAI, Anthropic, Ollama and Gemini formats), no browser
+localllm route      # optional: mix in your own cloud key, compare local vs cloud
 localllm eval       # score any running server in English + your language
 ```
 
@@ -40,6 +41,14 @@ buffers in a 256 MB host-visible heap backed by system RAM and decode drops up t
 
 **Can I chat with a local LLM in the terminal?** Yes: `localllm chat`. Answers stream as they're written, the
 conversation is remembered, `/save` writes it to a file, `/think` shows the model's reasoning, Ctrl+C stops an answer.
+
+**Can I use it as an Ollama, OpenAI, Anthropic or Gemini replacement?** Yes. One local endpoint at
+`http://127.0.0.1:8080` speaks all four APIs, so existing apps and SDKs only need a new base URL. See
+[docs/apis.md](docs/apis.md).
+
+**Can it fall back to my cloud API key?** Only if you turn it on. Routing is off by default; with your own key in an
+environment variable it sends a request to the cloud only when a rule says so (prompt too long, a cloud model asked for
+by name, or the local model scores below your floor in that language) and tells you where each answer came from.
 
 **Does it work offline?** After the first download, yes. Nothing leaves your PC.
 
