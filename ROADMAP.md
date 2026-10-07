@@ -18,11 +18,11 @@ isn't used** - skip unused model parts, share instead of duplicating caches, and
 - Tuned launch: small-BAR fix, MTP drafting for Qwen3.8, single-slot unified KV, `-fit off`
 
 ## 0.2 - use less system RAM
-- [x] `localllm chat`: terminal chat with streaming, history, /save, /think, Ctrl+C to stop (tested on gemma-4, 85-88 tok/s)
 Evidence: llama-server defaults (`--cache-ram 8192` MiB prompt cache, `--ctx-checkpoints 32` per slot) took one Gemma 4
 user from 0.7 GB to 18 GB of RAM and out-of-memory in three generations; with 0-1 checkpoints it stayed at 0.4-1.5 GB
 (llama.cpp #21690, PR #16391).
 
+- [x] `localllm chat`: terminal chat with streaming, history, /save, /think, Ctrl+C to stop (tested on gemma-4, 85-88 tok/s)
 - [ ] Measure RAM over a long chat, defaults vs tuned, Qwen3.8 + gemma-4 (#1)
 - [ ] Low-RAM profile by default for one user: `-np 1`, `--ctx-checkpoints` 0-4 (0-1 for hybrid/Gemma 4),
       `--cache-ram` 0-1024 sized from installed RAM; check the speed cost (#2)
@@ -33,6 +33,7 @@ user from 0.7 GB to 18 GB of RAM and out-of-memory in three generations; with 0-
       choose `--n-cpu-moe` from free RAM (#4)
 - [ ] `doctor`: RAM the model will use and what stays free; max context that fits on the GPU (#3)
 - [ ] Don't load unused parts: skip the vision projector without images, skip the MTP head when not drafting
+- [ ] Measure and minimise CPU use: idle and busy llama-server CPU, thread count, busy-waiting (#33)
 - [ ] Detect Windows "shared GPU memory" spill (VRAM silently overflowing into RAM) and say so
 
 ## 0.3 - work with the cloud providers' APIs
@@ -97,7 +98,6 @@ strong-model calls.
       LoRAs from same-base fine-tunes via SVD when none exist); (2) keep weights pinned in RAM in GPU-ready form and
       upload in large multi-threaded transfers (target < 1 s for 12 GB); (3) swap models inside one long-lived
       llama-server instead of restarting the process; (4) smaller files from 0.5. Measure each, upstream what works.
-- [ ] Measure and minimise CPU use: idle and busy llama-server CPU, thread count, busy-waiting
 - [ ] Lazy-load mode (like the maintainer's Creative Core) for PCs that can't hold two models: load a specialist on
       demand, unload when idle. Switch per *task phase*, not per message (hysteresis), keep recently used weights in the
       OS page cache when RAM allows (swap ~2.7 s upload vs ~4.3-6 s cold on a 12 GB model, measured), prefetch the
