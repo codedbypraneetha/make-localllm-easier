@@ -28,9 +28,15 @@ MODELS = {
 }
 
 
-def score(key: str, lang: str | None = None) -> float:
-    """Mean accuracy over the user's language tests if we have them, else over everything measured."""
-    s = MODELS[key]["scores"]
+TASK_SUITES = {"general": ("global", "regional"), "math": ("math",)}
+
+
+def score(key: str, lang: str | None = None, task: str = "general") -> float:
+    """Mean accuracy over the user's language tests for this task if we have them, else over every language."""
+    suites = TASK_SUITES.get(task, TASK_SUITES["general"])
+    s = {k: v for k, v in MODELS[key]["scores"].items() if k.split("/")[1] in suites}
+    if not s and task != "general":
+        return score(key, lang)
     mine = [v for k, v in s.items() if lang and k.startswith(lang + "/")]
     pool = mine or list(s.values())
     return sum(pool) / len(pool) if pool else 0.0
@@ -81,11 +87,12 @@ def speed(key: str, vram_gb: float, ram_free_gb: float = 0.0) -> float:
     return m["tok_s_9070xt"] * OFFLOAD_SPEED
 
 
-def pick(vram_gb: float, lang: str | None = None, ram_free_gb: float = 0.0, candidates=None) -> str | None:
+def pick(vram_gb: float, lang: str | None = None, ram_free_gb: float = 0.0, candidates=None,
+         task: str = "general") -> str | None:
     """Most accurate model (for `lang` when measured) that runs on this PC - whole on the GPU, or a MoE with some
     experts in RAM - with an 8k context; near-ties go to the faster one."""
     ok = [k for k in (candidates or MODELS) if cpu_moe_layers(k, vram_gb, ram_free_gb) is not None]
     if not ok:
         return None
-    best = max(score(k, lang) for k in ok)
-    return max((k for k in ok if score(k, lang) >= best - TIE_POINTS), key=lambda k: speed(k, vram_gb, ram_free_gb))
+    best = max(score(k, lang, task) for k in ok)
+    return max((k for k in ok if score(k, lang, task) >= best - TIE_POINTS), key=lambda k: speed(k, vram_gb, ram_free_gb))

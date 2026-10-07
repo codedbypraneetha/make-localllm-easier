@@ -39,6 +39,15 @@ def detect_language(text: str) -> str:
     return lang if n >= 3 else "en"
 
 
+MATH = re.compile(r"(\d\s*[-+*/×÷^=]\s*\d|\b(calculate|how many|how much|total|percent|average|solve|equation)\b|"
+                  r"คำนวณ|เท่าไร|เท่าไหร่|กี่|多少|几|计算|いくつ|何個|計算|كم|कितन)", re.I)
+
+
+def detect_task(text: str) -> str:
+    """Cheap task guess (no model): 'math' for word problems and arithmetic, else 'general'."""
+    return "math" if len(re.findall(r"\d+", text)) >= 2 and MATH.search(text) else "general"
+
+
 @dataclass
 class Provider:
     name: str
@@ -147,14 +156,15 @@ def pick_local(text: str, keys: list[str], current: str | None, vram_gb: float, 
     """Smart local routing (0.6): the measured-best model for this message's language among `keys`, with hysteresis -
     stay on the loaded model unless the other one scores >= SWITCH_POINTS higher. Returns (model key, reason)."""
     from . import catalog
-    lang = detect_language(text)
-    best = catalog.pick(vram_gb, lang, ram_free_gb, candidates=keys) or current or keys[0]
+    lang, task = detect_language(text), detect_task(text)
+    tag = lang if task == "general" else f"{lang} {task}"
+    best = catalog.pick(vram_gb, lang, ram_free_gb, candidates=keys, task=task) or current or keys[0]
     if current and best != current and current in keys:
-        gain = catalog.score(best, lang) - catalog.score(current, lang)
+        gain = catalog.score(best, lang, task) - catalog.score(current, lang, task)
         if gain < SWITCH_POINTS:
-            return current, f"{lang}: kept loaded model ({best} only {gain:+.1f} pts)"
-        return best, f"{lang}: {gain:+.1f} pts vs {current}"
-    return best, f"{lang}: best measured"
+            return current, f"{tag}: kept loaded model ({best} only {gain:+.1f} pts)"
+        return best, f"{tag}: {gain:+.1f} pts vs {current}"
+    return best, f"{tag}: best measured"
 
 
 def compare(prompt: str, local_url: str, cfg: dict | None = None) -> list[dict]:

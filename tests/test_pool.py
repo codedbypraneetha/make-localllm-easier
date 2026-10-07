@@ -46,3 +46,11 @@ def test_pool_lazy_loads_and_gateway_reports_the_model(monkeypatch):
     r = _post(gurl + "/api/chat", {"messages": [{"role": "user", "content": ZH}], "stream": False})
     assert r.headers["X-Localllm-Model"].startswith(Q) and launched == [G, Q]      # Ollama path goes through the pool too
     p.close(); g.shutdown()
+
+
+def test_detect_task():
+    assert router.detect_task("Janet has 16 eggs, eats 3 and bakes with 4. How many are left?") == "math"
+    assert router.detect_task("เป็ดวางไข่วันละ 16 ฟอง กินไป 3 ฟอง เหลือกี่ฟอง") == "math"
+    assert router.detect_task("What is 17 * 23?") == "math"
+    assert router.detect_task("Write a poem about the sea.") == "general"
+    assert router.detect_task("I was born in 1990 and moved in 2010.") == "general"   # numbers alone aren't math
