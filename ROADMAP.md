@@ -14,6 +14,7 @@ isn't used** - skip unused model parts, share instead of duplicating caches, and
 - Tuned launch: small-BAR fix, MTP drafting for Qwen3.8, single-slot unified KV, `-fit off`
 
 ## 0.2 - use less system RAM
+- [x] `localllm chat`: terminal chat with streaming, history, /save, /think, Ctrl+C to stop (tested on gemma-4, 85-88 tok/s)
 Evidence: llama-server defaults (`--cache-ram 8192` MiB prompt cache, `--ctx-checkpoints 32` per slot) took one Gemma 4
 user from 0.7 GB to 18 GB of RAM and out-of-memory in three generations; with 0-1 checkpoints it stayed at 0.4-1.5 GB
 (llama.cpp #21690, PR #16391).

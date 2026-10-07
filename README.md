@@ -13,6 +13,7 @@ fits your card, downloads llama.cpp and the model, starts it with settings profi
 You also get an OpenAI-compatible API at `http://127.0.0.1:8080/v1` for any app that speaks it. Offline, private, free.
 
 ```
+localllm chat       # chat right here in the terminal (Thai, Japanese, any language)
 localllm doctor     # what this GPU is good for: model sizes, speed, how much text it can hold
 localllm list       # every model we have measured, with scores per language
 localllm serve      # API only, no browser
@@ -33,6 +34,9 @@ Hindi, Arabic and Thai lose the most (13 points).
 **Why is llama.cpp slow on my AMD (or Intel) GPU on Windows?** If Resizable BAR is off, llama.cpp's Vulkan backend puts
 buffers in a 256 MB host-visible heap backed by system RAM and decode drops up to 1.7x. `localllm` sets
 `GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM=1` for you ([llama.cpp#27097](https://github.com/ggml-org/llama.cpp/issues/27097)).
+
+**Can I chat with a local LLM in the terminal?** Yes: `localllm chat`. Answers stream as they're written, the
+conversation is remembered, `/save` writes it to a file, `/think` shows the model's reasoning, Ctrl+C stops an answer.
 
 **Does it work offline?** After the first download, yes. Nothing leaves your PC.
 

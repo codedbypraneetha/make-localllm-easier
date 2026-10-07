@@ -3,6 +3,7 @@
   localllm                  check this PC, pick the best model, download, start, open the chat page
   localllm doctor           what GPU/RAM you have and which model fits
   localllm list             every model we have measured
+  localllm chat             chat in this terminal (starts the model if it isn't running)
   localllm serve [MODEL]    start an OpenAI-compatible server only (http://127.0.0.1:8080/v1)
   localllm eval             score a running server in English + your language (global and local exams)
 """
@@ -98,6 +99,21 @@ def cmd_run(a) -> None:
         proc.terminate()
 
 
+def cmd_chat(a) -> None:
+    from . import chat
+    url = a.url or f"http://127.0.0.1:{a.port}"
+    if chat.server_alive(url):
+        chat.repl(url)
+        return
+    if a.url:
+        sys.exit(f"[localllm] nothing is answering at {a.url}")
+    proc, url = _start(a.model, a.port, a.ctx)
+    try:
+        chat.repl(url, a.model or "")
+    finally:
+        proc.terminate()
+
+
 def cmd_serve(a) -> None:
     a.no_browser = True
     cmd_run(a)
@@ -176,6 +192,10 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
     sub.add_parser("list").set_defaults(fn=cmd_list)
+    c = sub.add_parser("chat"); c.add_argument("model", nargs="?", choices=list(catalog.MODELS))
+    c.add_argument("--url", help="chat with an already running OpenAI-compatible server instead")
+    c.add_argument("--port", type=int, default=8080); c.add_argument("--ctx", type=int, default=8192)
+    c.set_defaults(fn=cmd_chat)
     s = sub.add_parser("serve"); s.add_argument("model", nargs="?", choices=list(catalog.MODELS))
     s.add_argument("--port", type=int, default=8080); s.add_argument("--ctx", type=int, default=8192)
     s.set_defaults(fn=cmd_serve)

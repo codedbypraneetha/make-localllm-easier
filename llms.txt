@@ -5,6 +5,7 @@
 ## Use
 - `localllm`: detect GPU/RAM, pick model, download llama.cpp + model, start an OpenAI-compatible server at http://127.0.0.1:8080/v1, open chat page
 - `localllm doctor`: which model sizes (4B-120B MoE) fit this GPU, at which quantization, estimated speed, context capacity
+- `localllm chat`: chat in the terminal with streaming and history
 - `localllm eval --langs en,ja`: multiple-choice accuracy of any OpenAI-compatible server (Global-MMLU-Lite 23 languages, INCLUDE 44 countries, ThaiExam)
 
 ## Key measured facts (RX 9070 XT 16 GB, Windows, llama.cpp Vulkan)
