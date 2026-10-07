@@ -118,10 +118,12 @@ under 2 points as a tie and picks the faster model.
 
 1. **2-bit costs 8-13 points, and lower-resource languages pay the most.** Hindi, Arabic and Thai lose 13; English,
    Chinese and Spanish about 8-9. A 177B MoE squeezed to 1.6 bits scored *below* a 27B at 3 bits.
-2. **Calibrating the quantization on your languages helps at 2-bit, not at ~3.5 bits.** Same 2-bit recipe, only the
-   importance matrix changed: stock 45.0 Thai, Thai-text 51.7, a mixed chat-format set (English, Thai, Hindi, Arabic,
-   code, math) 51.0 Thai with the best average across Thai/Hindi/Arabic/English (61.2 vs 58.7). At ~3.5 bits a Thai
-   matrix scored the same as the stock one (64.8 vs 64.6). Details in [#24](https://github.com/phonology024/make-localllm-easier/issues/24).
+2. **Build 2-bit files from the original weights, and don't expect a small calibration set to beat a good vendor
+   build.** Re-quantizing an 8-bit file down to 2 bits cost Thai about 9 points (45.0 vs 54.2 for the same recipe made
+   from BF16). A Thai or mixed-language importance matrix won most of that back (51-52 Thai) - but built from BF16, our
+   mixed matrix was *worse* than Unsloth's own UD-IQ2_S in 3 of 4 languages by KL divergence (table below), so we are not
+   publishing it. At ~3.5 bits the matrix made no difference (64.8 vs 64.6 Thai). Details in
+   [#24](https://github.com/phonology024/make-localllm-easier/issues/24).
 3. **AMD/Intel cards without Resizable BAR: the Vulkan fix is model-dependent - so measure.**
    `GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM=1` makes Qwen3.8-27B (hybrid DeltaNet, rewrites a 3 MB state per layer per token)
    1.64x faster on an RX 9070 XT with ReBAR off, but gemma-4-26B-A4B 7-9% *slower*. `localllm` applies it per model,
@@ -130,6 +132,20 @@ under 2 points as a tie and picks the faster model.
 4. **Qwen3.8 GGUFs ship a multi-token-prediction head.** Drafting 2 tokens with it adds ~40% decode speed for free;
    drafting 3 is slower.
 5. **The first run of a new llama.cpp build is slow** while the GPU driver compiles its shaders once (~15 s).
+
+### How much each quant changes the model, per language
+
+KL divergence from the Qwen3.8-27B Q8_0 reference (lower is better) and how often the most likely next token stays
+the same, on held-out Wikipedia text (8 x 512 tokens per language; `tools/kld_per_language.py`):
+
+| Quant | Size | Thai | Hindi | Arabic | English |
+|---|---|---|---|---|---|
+| UD-Q3_K_XL | 12.2 GB | 0.034 / 91.7% | 0.037 / 90.2% | 0.078 / 92.5% | 0.021 / 93.2% |
+| UD-IQ2_S (Unsloth) | 7.8 GB | 0.188 / 81.5% | 0.224 / 77.5% | 0.291 / 84.4% | 0.111 / 86.0% |
+| IQ2_S, our mixed imatrix, from BF16 | 7.8 GB | 0.210 / 81.8% | 0.215 / 77.1% | 0.365 / 82.1% | 0.137 / 83.6% |
+
+Going from 3 to 2 bits multiplies the KL divergence 4-6x in every language, and top-token agreement ends 2-9 points
+lower in Arabic, Thai and Hindi than in English - the same order as the benchmark losses.
 
 ## How the benchmark works
 

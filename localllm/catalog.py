@@ -5,14 +5,14 @@ Add a model only after measuring it with `localllm eval`."""
 
 MODELS = {
     "qwen3.8-27b-q3": {
-        "repo": "unsloth/Qwen3.8-27B-GGUF", "file": "Qwen3.8-27B-UD-Q3_K_XL.gguf", "gb": 12.2,
+        "repo": "unsloth/Qwen3.8-27B-GGUF", "file": "Qwen3.8-27B-UD-Q3_K_XL.gguf", "gb": 12.2, "bpw": 3.8, "qat": False,
         "kv_kb_per_token": 34.8, "fixed_cache_gb": 0.15, "checkpoint_gb": 0.15, "max_ctx": 262144, "tok_s_9070xt": 50, "mtp": True, "vk_fix": True,
         "cpu_mapped_gb": 0.51,  # measured: ~521 MiB of the 12.2 GiB model stays CPU-mapped (large 248k vocab)
         "scores": {"en/global": 81.5, "zh/global": 76.2, "zh/regional": 74.7, "es/global": 80.2, "es/regional": 76.8, "hi/global": 69.0, "hi/regional": 74.3, "ar/global": 70.8, "ar/regional": 71.2, "ja/global": 73.5, "ja/regional": 87.6, "th/regional": 67.1},
         "note": "dense 27B; built-in MTP head drafts 2 tokens",
     },
     "gemma4-26b-a4b-qat": {
-        "repo": "unsloth/gemma-4-26B-A4B-it-qat-GGUF", "file": "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf", "gb": 13.3,
+        "repo": "unsloth/gemma-4-26B-A4B-it-qat-GGUF", "file": "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf", "gb": 13.3, "bpw": 4.2, "qat": True,
         "kv_kb_per_token": 10.9, "fixed_cache_gb": 0.11, "checkpoint_gb": 0.11, "max_ctx": 262144, "tok_s_9070xt": 90, "mtp": False, "vk_fix": False,
         "moe": {"layers": 30, "expert_gb_per_layer": 0.4},  # from the GGUF: 11.96 GiB of experts over 30 layers
         "tok_s_offload": {8: 45, 13: 36, 18: 31},          # measured: layers' experts in RAM -> decode tok/s
@@ -20,7 +20,7 @@ MODELS = {
         "note": "MoE with ~4B active params: fastest",
     },
     "qwen3.8-27b-iq2": {
-        "repo": "unsloth/Qwen3.8-27B-GGUF", "file": "Qwen3.8-27B-UD-IQ2_S.gguf", "gb": 7.8,
+        "repo": "unsloth/Qwen3.8-27B-GGUF", "file": "Qwen3.8-27B-UD-IQ2_S.gguf", "gb": 7.8, "bpw": 2.5, "qat": False,
         "kv_kb_per_token": 34.8, "fixed_cache_gb": 0.15, "checkpoint_gb": 0.15, "max_ctx": 262144, "tok_s_9070xt": 40, "mtp": False, "vk_fix": True,
         "scores": {"en/global": 74.2, "zh/global": 67.8, "zh/regional": 67.8, "es/global": 70.8, "es/regional": 69.2, "hi/global": 56.2, "hi/regional": 55.5, "ar/global": 60.8, "ar/regional": 57.2, "ja/global": 65.8, "ja/regional": 77.9, "th/regional": 54.2},
         "note": "for 10-12 GB cards only: 2-bit costs 8-13 points, most in Hindi, Arabic, Thai",
@@ -68,6 +68,15 @@ def cpu_moe_layers(key: str, vram_gb: float, ram_free_gb: float) -> int | None:
     return None
 
 
+QUALITY_FLOOR_BPW = 2.7   # below ~UD-Q2_K_XL-class quants accuracy falls off a cliff (non-English most: -13 pts at 2.5 bpw)
+
+
+def below_floor(key: str) -> bool:
+    """Post-training quants below the floor; vendor QAT checkpoints are trained for their bit-width and exempt."""
+    m = MODELS[key]
+    return m.get("bpw", 99) < QUALITY_FLOOR_BPW and not m.get("qat")
+
+
 TIE_POINTS = 2.0   # accuracy gaps this small are inside the benchmark's margin: prefer the faster model
 
 
@@ -95,4 +104,6 @@ def pick(vram_gb: float, lang: str | None = None, ram_free_gb: float = 0.0, cand
     if not ok:
         return None
     best = max(score(k, lang, task) for k in ok)
-    return max((k for k in ok if score(k, lang, task) >= best - TIE_POINTS), key=lambda k: speed(k, vram_gb, ram_free_gb))
+    near = [k for k in ok if score(k, lang, task) >= best - TIE_POINTS]
+    # on a tie, a vendor QAT checkpoint beats a post-training quant of similar accuracy, then the faster one wins
+    return max(near, key=lambda k: (bool(MODELS[k].get("qat")), speed(k, vram_gb, ram_free_gb)))

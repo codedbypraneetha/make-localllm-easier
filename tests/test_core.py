@@ -166,3 +166,8 @@ def test_math_answer_parsing():
     assert bench.final_number("no idea") is None
     assert bench.available("th", ("math",)) == ["math"] and bench.available("ar", ("math",)) == []
     assert bench.available("th") == ["regional"]          # knowledge suites stay the default
+
+
+def test_quality_floor_and_qat():
+    assert catalog.below_floor("qwen3.8-27b-iq2") and not catalog.below_floor("qwen3.8-27b-q3")
+    assert not catalog.below_floor("gemma4-26b-a4b-qat")
