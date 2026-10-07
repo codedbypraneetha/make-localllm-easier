@@ -86,3 +86,9 @@ def test_detect_translate():
     assert router.detect_task("ช่วยแปลประโยคนี้เป็นภาษาอังกฤษ: วันนี้อากาศดี") == "translate"
     assert router.detect_task("请把这句话翻译成英文：今天天气很好。") == "translate"
     assert router.detect_task("How many people speak Thai?") == "general"
+
+
+def test_translation_request_does_not_swap_for_chinese():
+    zh_tr = "请把这句话翻译成英文：今天天气很好，我们去公园散步吧。"
+    assert router.pick_local(zh_tr, [Q, G], G, 15.9)[0] == G      # translate: Qwen only +1.4 -> stay on gemma
+    assert router.pick_local(ZH, [Q, G], G, 15.9)[0] == Q         # same language, knowledge question: +5.5 -> swap

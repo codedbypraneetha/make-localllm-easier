@@ -44,6 +44,10 @@ gain of 3+ points; on 24 GB+ cards both models stay loaded and routing is instan
 scores 96.8 / 89.6 / 88.8 in English / Thai / Chinese vs 94.4 / 87.2 / 84.4 for Qwen3.8-27B Q3, at 1.8x the speed.
 Measure any server yourself with `localllm eval --suites math --langs en,de,ja`.
 
+**Which local model translates better?** On FLORES-101 (100 sentences each way, chrF++), gemma-4-26B-A4B QAT beats
+Qwen3.8-27B Q3 in Hindi (+4.7), Arabic (+2.9), Japanese (+1.6) and Thai (+1.5); Qwen leads Chinese by 1.4. Try
+`localllm eval --suites translate --langs th,ja,sw` (101 languages).
+
 **Why is llama.cpp slow on my AMD (or Intel) GPU on Windows?** If Resizable BAR is off, llama.cpp's Vulkan backend puts
 buffers in a 256 MB host-visible heap backed by system RAM and decode drops up to 1.7x. `localllm` sets
 `GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM=1` for you ([llama.cpp#27097](https://github.com/ggml-org/llama.cpp/issues/27097)).
@@ -123,9 +127,11 @@ What we measured on an RX 9070 XT (16 GB) with 32 GB RAM, and why this is **not 
 | Knowledge, Chinese / Spanish / Japanese | **+5.5 / +3.7 / +2.4 pts** | |
 | Knowledge, English / Thai / Hindi / Arabic | within 2 pts | within 2 pts, **1.8x faster** |
 | Math (MGSM), English / Thai / Chinese | 94.4 / 87.2 / 84.4 | **96.8 / 89.6 / 88.8** |
+| Translation (FLORES chrF++), Thai / Chinese / Japanese / Hindi / Arabic | 54.1 / 49.1 / 46.4 / 58.1 / 59.0 | **55.6** / 47.7 / **48.0 / 62.8 / 61.9** |
 | Model swap (stop one, load the other) | 8.6 s (4.1 s with the page cache warm and 16 MiB upload buffers) | |
 
-Example: Chinese *knowledge* questions go to Qwen (+5.5), Chinese *math* goes to gemma (+4.4). On a 16 GB card a
+Example: Chinese *knowledge* questions go to Qwen (+5.5); Chinese *math* (+4.4) and translation (within 1.4) stay
+on gemma. On a 16 GB card a
 second model only pays off for Chinese and Spanish (Japanese +2.4 is inside the benchmark margin), and every
 swap costs 4-9 s. Keeping both
 models on the card by letting Windows page VRAM made **both** 4-5x slower, so that's not an option. Faster switching

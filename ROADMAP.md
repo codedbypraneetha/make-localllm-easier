@@ -121,7 +121,8 @@ strong-model calls.
       its task by more than the benchmark margin (~5 points), fits next to the main model (or swaps fast), and isn't poor
       in the user's language (otherwise the generalist talks to the user and hands only the task to the specialist)
 - [ ] `localllm eval` task suites beyond multiple choice: code (HumanEval+/LiveCodeBench-style), math (GSM8K/MATH-500),
-      vision QA, translation - needed to measure specialists honestly. Done: math (MGSM, 11 languages, `--suites math`)
+      vision QA, translation - needed to measure specialists honestly. Done: math (MGSM, 11 languages, `--suites math`),
+      translation (FLORES-101, 101 languages, chrF++ identical to sacreBLEU, `--suites translate`)
 - [x] Show which model answered and why (`X-Localllm-Model`, shown in `localllm chat`); override with `--model`
 
 ## Later
