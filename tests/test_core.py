@@ -156,3 +156,13 @@ def test_moe_offload_on_a_12gb_card():
     a = runtime.server_args(runtime.Path("m"), None, 8080, 8192, False, ram_total_gb=32, cpu_moe=n)
     assert a[a.index("--n-cpu-moe") + 1] == str(n) and a[a.index("--load-mode") + 1] == "none"
     assert catalog.speed("gemma4-26b-a4b-qat", 12.0, 20) == 45                  # measured, not the placeholder
+
+
+def test_math_answer_parsing():
+    from localllm import bench
+    assert bench.final_number("16 - 3 - 4 = 9 eggs, 9 * $2 = $18.\nAnswer: 18") == 18
+    assert bench.final_number("So the total is **1,250** dollars.\nAnswer: **1,250**") == 1250
+    assert bench.final_number("She has 3.5 kg left.") == 3.5
+    assert bench.final_number("no idea") is None
+    assert bench.available("th", ("math",)) == ["math"] and bench.available("ar", ("math",)) == []
+    assert bench.available("th") == ["regional"]          # knowledge suites stay the default

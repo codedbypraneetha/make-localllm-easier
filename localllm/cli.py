@@ -301,7 +301,7 @@ def cmd_eval(a) -> None:
     from . import bench
     langs = a.langs.split(",") if a.langs else sorted({"en", bench.system_language()})
     _say(f"benchmarking {a.url} in: {', '.join(langs)}  (pick others with --langs ja,de,...)")
-    bench.run(a.url, a.name, langs, a.limit)
+    bench.run(a.url, a.name, langs, a.limit, tuple(a.suites.split(",")))
 
 
 def main() -> None:
@@ -334,6 +334,7 @@ def main() -> None:
     e = sub.add_parser("eval"); e.add_argument("--url", default="http://127.0.0.1:8080")
     e.add_argument("--name", default="model"); e.add_argument("--limit", type=int, default=0)
     e.add_argument("--langs", help="comma-separated ISO codes, default: en + this PC's language")
+    e.add_argument("--suites", default="global,regional", help="global,regional (knowledge) and/or math (MGSM)")
     e.set_defaults(fn=cmd_eval)
     a = ap.parse_args()
     if a.fn is cmd_serve:

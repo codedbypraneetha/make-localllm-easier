@@ -7,6 +7,10 @@ Two kinds of test per language, so a score means something wherever you live:
             44 languages); ThaiExam (typhoon-ai, Apache-2.0) fills in Thai
 Zero-shot, thinking off, one token: the answer is the option letter with the highest log-probability. Fast
 (prompt processing only) and deterministic. Data is downloaded at eval time and cached, never redistributed.
+
+Task suites (opt-in with --suites, they generate text so they are slower):
+  math      MGSM (Shi et al. 2022, CC-BY-SA-4.0): the same 250 grade-school word problems in 11 languages; the model
+            reasons in text (thinking off) and the final number is compared exactly
 """
 from __future__ import annotations
 
@@ -32,6 +36,9 @@ INCLUDE = {"sq": "Albanian", "ar": "Arabic", "hy": "Armenian", "az": "Azerbaijan
            "uk": "Ukrainian", "ur": "Urdu", "uz": "Uzbek", "vi": "Vietnamese"}
 THAIEXAM = "https://huggingface.co/datasets/typhoon-ai/thai_exam/resolve/main/data/{s}/{s}_test.jsonl"
 SYSTEM = "Answer the multiple-choice question. Reply with only the letter of the correct option."
+MGSM_LANGS = ["bn", "de", "en", "es", "fr", "ja", "ru", "sw", "te", "th", "zh"]
+MATH_SYSTEM = "Solve the problem step by step, briefly. End with a last line of the form 'Answer: <number>'."
+SUITES = ("global", "regional", "math")
 
 
 def system_language() -> str:
@@ -45,8 +52,9 @@ def system_language() -> str:
     return names.get(loc.split("_")[0].lower(), "en")
 
 
-def available(lang: str) -> list[str]:
-    return [s for s, ok in (("global", lang in GLOBAL_LANGS), ("regional", lang in INCLUDE or lang == "th")) if ok]
+def available(lang: str, suites: tuple[str, ...] = ("global", "regional")) -> list[str]:
+    have = {"global": lang in GLOBAL_LANGS, "regional": lang in INCLUDE or lang == "th", "math": lang in MGSM_LANGS}
+    return [s for s in suites if have[s]]
 
 
 def _rows(ds: str, cfg: str, split: str = "test") -> list[dict]:
@@ -78,6 +86,9 @@ def load(suite: str, lang: str) -> list[dict]:
                     keys = [c for c in "abcde" if r.get(c)]
                     items.append({"q": r["question"], "opts": [r[c] for c in keys],
                                   "ans": keys.index(r["answer"].strip().lower())})
+    elif suite == "math" and lang in MGSM_LANGS:
+        for r in _rows("juletxara/mgsm", lang):
+            items.append({"q": r["question"], "ans": int(r["answer_number"])})
     elif suite == "regional":
         for r in _rows("CohereLabs/include-lite-44", INCLUDE[lang]):
             opts = r["choices"] if isinstance(r["choices"], list) else ast.literal_eval(r["choices"])
@@ -107,6 +118,29 @@ def ask(url: str, item: dict) -> int | None:
     return best
 
 
+def final_number(text: str) -> float | None:
+    """The answer of a worked solution: the number after the last 'Answer:', else the last number in the text."""
+    import re
+    tail = text.rsplit("Answer", 1)[-1] if "Answer" in text else text
+    nums = re.findall(r"-?\d[\d,]*\.?\d*", tail.replace(" ", " ").replace("**", ""))
+    if not nums:
+        return None
+    try:
+        return float(nums[-1].replace(",", "").rstrip("."))
+    except ValueError:
+        return None
+
+
+def ask_math(url: str, item: dict) -> bool:
+    body = {"messages": [{"role": "system", "content": MATH_SYSTEM}, {"role": "user", "content": item["q"]}],
+            "max_tokens": 600, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}}
+    req = urllib.request.Request(url.rstrip("/") + "/v1/chat/completions", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    text = json.load(urllib.request.urlopen(req, timeout=600))["choices"][0]["message"].get("content") or ""
+    n = final_number(text)
+    return n is not None and abs(n - item["ans"]) < 1e-6
+
+
 def _save(name: str, res: dict) -> None:
     out = HOME / "results.json"
     allres = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
@@ -115,17 +149,17 @@ def _save(name: str, res: dict) -> None:
     out.write_text(json.dumps(allres, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
-def run(url: str, name: str, langs: list[str], limit: int = 0) -> dict:
+def run(url: str, name: str, langs: list[str], limit: int = 0, suites: tuple[str, ...] = ("global", "regional")) -> dict:
     """Scores are saved after every test, so an interrupted run keeps what it finished."""
     res, t0 = {}, time.time()
     for lang in langs:
-        suites = available(lang)
-        if not suites:
-            print(f"  {lang}: no benchmark yet (contributions welcome)")
-        for suite in suites:
+        mine = available(lang, suites)
+        if not mine:
+            print(f"  {lang}: no {'/'.join(suites)} benchmark yet (contributions welcome)")
+        for suite in mine:
             items = load(suite, lang)
             items = items[:limit] if limit else items
-            ok = sum(ask(url, it) == it["ans"] for it in items)
+            ok = sum(ask_math(url, it) if suite == "math" else ask(url, it) == it["ans"] for it in items)
             acc = round(100 * ok / len(items), 1)
             res[f"{lang}/{suite}"] = {"acc": acc, "correct": ok, "n": len(items)}
             margin = round(196 * (acc / 100 * (1 - acc / 100) / len(items)) ** 0.5, 1)
