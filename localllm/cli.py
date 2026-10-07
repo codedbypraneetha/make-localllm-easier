@@ -272,10 +272,11 @@ def cmd_doctor(_a) -> None:
         acc = m["scores"][test]
         tl, suite = test.split("/")
         kind = {"global": "translated world-knowledge exam", "math": "grade-school math word problems",
-                "translate": "translation to/from English (chrF++)"}.get(
+                "translate": "translation to/from English"}.get(
             suite, "real local school/licence exams")
         mark = "  <- your language" if tl == lang else ""
-        print(f"  {tl.upper():3} {kind:32} {acc:5.1f}% correct{mark}")
+        unit = "chrF++ (0-100)" if suite == "translate" else "% correct"
+        print(f"  {tl.upper():3} {kind:32} {acc:5.1f}{'' if unit[0] == '%' else ' '}{unit}{mark}")
     if others:
         print(f"  also measured in {', '.join(others)} (`localllm list`)")
     print(f"  holds ~{ctx // 1000}k tokens at once (~{ctx // sizing.TOKENS_PER_PAGE} pages of text) next to the model")
