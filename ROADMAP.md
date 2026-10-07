@@ -90,6 +90,12 @@ strong-model calls.
 - [ ] Routing table generated from catalog scores per language/task + measured tok/s, overridable per app
 - [ ] Benchmark: answer quality and end-to-end latency vs a single model, on the multilingual suite + a routing test set
       (Thai/Thai-English set from the Laya research, extended to other languages); ship only if both improve
+- [ ] Specialist pool for local-first routing: slots for code, math/reasoning, vision, embeddings (RAG + the router
+      itself), speech-to-text (babelscribe), translation. A specialist joins the catalog only if it beats the generalist on
+      its task by more than the benchmark margin (~5 points), fits next to the main model (or swaps fast), and isn't poor
+      in the user's language (otherwise the generalist talks to the user and hands only the task to the specialist)
+- [ ] `localllm eval` task suites beyond multiple choice: code (HumanEval+/LiveCodeBench-style), math (GSM8K/MATH-500),
+      vision QA, translation - needed to measure specialists honestly
 - [ ] Show which model answered and why, with a one-key override in `localllm chat`
 
 ## Later
