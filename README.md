@@ -95,6 +95,34 @@ growing while you chat. `localllm` sizes both to your PC. Same 30-turn chat, RX 
 About **4x less RAM, same speed, ~15% less CPU per answer, ~0% CPU while idle.** On cards too small for gemma-4, its
 experts can stay in RAM: 45 / 36 / 31 tok/s with 8 / 13 / 18 layers' experts off the GPU (12 / 10 / 8 GB cards).
 
+## Smart routing between local models (experimental, opt-in)
+
+```
+localllm serve --models auto          # or --models qwen3.8-27b-q3,gemma4-26b-a4b-qat
+```
+
+Each message goes to the model with the best *measured* score for its language and task (math vs general). If all the
+models fit in VRAM together (24 GB+ cards for the pair below), they all stay loaded and routing is instant. Otherwise
+one model is on the GPU at a time and it only swaps when the other is at least 3 points better, because a swap costs
+seconds.
+Every answer says which model wrote it and why (`X-Localllm-Model` header; shown under each answer in `localllm chat`).
+
+What we measured on an RX 9070 XT (16 GB) with 32 GB RAM, and why this is **not the default**:
+
+| | Qwen3.8-27B Q3 | gemma-4-26B-A4B QAT |
+|---|---|---|
+| Knowledge, Chinese / Spanish / Japanese | **+5.5 / +3.7 / +2.4 pts** | |
+| Knowledge, English / Thai / Hindi / Arabic | within 2 pts | within 2 pts, **1.8x faster** |
+| Math (MGSM), English / Thai / Chinese | 94.4 / 87.2 / 84.4 | **96.8 / 89.6 / 88.8** |
+| Model swap (stop one, load the other) | 8.6 s (4.1 s with the page cache warm and 16 MiB upload buffers) | |
+
+Example: Chinese *knowledge* questions go to Qwen (+5.5), Chinese *math* goes to gemma (+4.4). On a 16 GB card a
+second model only pays off for Chinese and Spanish (Japanese +2.4 is inside the benchmark margin), and every
+swap costs 4-9 s. Keeping both
+models on the card by letting Windows page VRAM made **both** 4-5x slower, so that's not an option. Faster switching
+is tracked in [#32](https://github.com/phonology024/make-localllm-easier/issues/32): LoRA adapters on one shared base, or
+specialists small enough to sit next to the main model.
+
 ## Measured results (RX 9070 XT 16 GB, Windows 11, llama.cpp Vulkan)
 
 Accuracy (%) on multiple-choice exams, zero-shot. **global** = Global-MMLU-Lite: the same 400 questions translated, so

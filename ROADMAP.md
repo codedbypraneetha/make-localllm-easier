@@ -94,7 +94,8 @@ hard reasoning, the user's cloud key only when nothing local is good enough. Unl
 Thai/Thai-English requests vs 20/48 for rules, but took ~2.3 s per message; RouteLLM keeps 95% of GPT-4 quality with 26%
 strong-model calls.
 
-- [ ] Router latency budget < 50 ms: embedding/semantic router or a <=1B classifier on CPU, never the 27B model
+- [x] Router latency budget < 50 ms: script + keyword language/task detection, microseconds, never the 27B model
+      (an embedding router stays an option if rules prove too coarse)
 - [ ] Two models resident at once (depends on 0.5 compression: e.g. a fast and a strong model that both fit in 16 GB),
       so routing never waits for a 5-6 s model swap; fall back to "stay on the current model" when a swap would be needed
 - [ ] **Sub-second model switching** (research, our own experiments where nothing is published): the measured 2.7 s for a
@@ -103,21 +104,25 @@ strong-model calls.
       LoRAs from same-base fine-tunes via SVD when none exist); (2) keep weights pinned in RAM in GPU-ready form and
       upload in large multi-threaded transfers (target < 1 s for 12 GB); (3) swap models inside one long-lived
       llama-server instead of restarting the process; (4) smaller files from 0.5. Measure each, upstream what works.
-- [ ] Lazy-load mode (like the maintainer's Creative Core) for PCs that can't hold two models: load a specialist on
+- [x] Lazy-load mode (like the maintainer's Creative Core) for PCs that can't hold two models: load a specialist on
       demand, unload when idle. Switch per *task phase*, not per message (hysteresis), keep recently used weights in the
       OS page cache when RAM allows (swap ~2.7 s upload vs ~4.3-6 s cold on a 12 GB model, measured), prefetch the
       likely next model into RAM while the current one answers, tell the user "switching to the code model (~4 s)" with a
       stay-here option. `localllm` picks resident-pair vs lazy-load from the PC's VRAM/RAM. Look at llama-swap first.
-- [ ] Routing table generated from catalog scores per language/task + measured tok/s, overridable per app
+- [x] Routing table generated from catalog scores per language/task + measured tok/s, overridable per app (`--models`)
+- [x] Lazy-load vs resident pair chosen from VRAM (`--models auto`); measured swap 8.6 s alternating (page cache can't
+      hold both on 32 GB RAM), 4.1 s warm with 16 MiB upload buffers; WDDM VRAM oversubscription made both models 4-5x
+      slower (rejected)
 - [ ] Benchmark: answer quality and end-to-end latency vs a single model, on the multilingual suite + a routing test set
-      (Thai/Thai-English set from the Laya research, extended to other languages); ship only if both improve
+      (Thai/Thai-English set from the Laya research, extended to other languages); ship only if both improve.
+      Status: on 16 GB only zh/es gain >= 3 pts and each swap costs 4-9 s, so routing stays opt-in, not the default
 - [ ] Specialist pool for local-first routing: slots for code, math/reasoning, vision, embeddings (RAG + the router
       itself), speech-to-text (babelscribe), translation. A specialist joins the catalog only if it beats the generalist on
       its task by more than the benchmark margin (~5 points), fits next to the main model (or swaps fast), and isn't poor
       in the user's language (otherwise the generalist talks to the user and hands only the task to the specialist)
 - [ ] `localllm eval` task suites beyond multiple choice: code (HumanEval+/LiveCodeBench-style), math (GSM8K/MATH-500),
-      vision QA, translation - needed to measure specialists honestly
-- [ ] Show which model answered and why, with a one-key override in `localllm chat`
+      vision QA, translation - needed to measure specialists honestly. Done: math (MGSM, 11 languages, `--suites math`)
+- [x] Show which model answered and why (`X-Localllm-Model`, shown in `localllm chat`); override with `--model`
 
 ## Later
 - Shared prefix cache (block/radix, like vLLM/SGLang) instead of per-slot prompt copies - needs llama.cpp work

@@ -54,3 +54,28 @@ def test_detect_task():
     assert router.detect_task("What is 17 * 23?") == "math"
     assert router.detect_task("Write a poem about the sea.") == "general"
     assert router.detect_task("I was born in 1990 and moved in 2010.") == "general"   # numbers alone aren't math
+
+
+def test_task_changes_the_pick_for_chinese():
+    zh_math = "小明有 15 个苹果，给了朋友 7 个，又买了 12 个。他现在有多少个苹果？"
+    assert router.pick_local(ZH, [Q, G], G, 15.9)[0] == Q          # zh knowledge: Qwen +5.5
+    assert router.pick_local(zh_math, [Q, G], Q, 15.9)[0] == G     # zh math: gemma +4.4 (MGSM)
+
+
+def test_resident_pool_routes_without_swaps(monkeypatch):
+    monkeypatch.setattr(router, "load_config", lambda: {"enabled": False})
+    launched = []
+
+    def launch(key):
+        launched.append(key)
+        s, url = _up()
+        return FakeProc(s), url
+
+    p = pool.Pool([Q, G], launch, 32.0, first=G, resident=True)
+    g, gurl = _gw(p)
+    assert sorted(launched) == sorted([Q, G]) and p.swaps == []
+    th = _post(gurl + "/v1/chat/completions", {"messages": [{"role": "user", "content": TH}]})
+    zh = _post(gurl + "/v1/chat/completions", {"messages": [{"role": "user", "content": ZH}]})
+    assert th.headers["X-Localllm-Model"].startswith(G) and zh.headers["X-Localllm-Model"].startswith(Q)
+    assert "swapped" not in zh.headers["X-Localllm-Model"] and len(launched) == 2
+    p.close(); g.shutdown()

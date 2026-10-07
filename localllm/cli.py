@@ -100,7 +100,12 @@ def _start(key: str | None, port: int, ctx: int, models: str | None = None):
         from . import gateway, pool
         first = catalog.pick(dev["total_gb"], system_language(), ram_free, candidates=keys)
         _say(f"smart routing between {', '.join(keys)}: one loaded at a time, swapped when another is clearly better")
-        p = pool.Pool(keys, lambda k: _launch(k, server, dev, ctx, ram_free), dev["total_gb"], ram_free, first)
+        need = sum(catalog.MODELS[k]["gb"] + catalog.MODELS[k]["kv_kb_per_token"] * ctx / 2**20
+                   + catalog.MODELS[k]["fixed_cache_gb"] for k in keys) + 1.0     # + ~1 GB driver/compute buffers
+        resident = need <= dev["total_gb"]
+        _say(f"all {len(keys)} models fit in VRAM together ({need:.1f} GB): no swaps" if resident else
+             f"they need {need:.1f} GB together: lazy-loading one at a time")
+        p = pool.Pool(keys, lambda k: _launch(k, server, dev, ctx, ram_free), dev["total_gb"], ram_free, first, resident)
         return _PoolProc(p, gateway.serve(p, port=port, model_name="localllm-auto")), f"http://127.0.0.1:{port}"
     key = key or (catalog.pick(dev["total_gb"], system_language(), ram_free) if dev else None)
     if not key:
@@ -265,7 +270,8 @@ def cmd_doctor(_a) -> None:
     for test in shown:
         acc = m["scores"][test]
         tl, suite = test.split("/")
-        kind = "translated world-knowledge exam" if suite == "global" else "real local school/licence exams"
+        kind = {"global": "translated world-knowledge exam", "math": "grade-school math word problems"}.get(
+            suite, "real local school/licence exams")
         mark = "  <- your language" if tl == lang else ""
         print(f"  {tl.upper():3} {kind:32} {acc:5.1f}% correct{mark}")
     if others:

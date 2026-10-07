@@ -8,7 +8,8 @@ MODELS = {
         "repo": "unsloth/Qwen3.8-27B-GGUF", "file": "Qwen3.8-27B-UD-Q3_K_XL.gguf", "gb": 12.2, "bpw": 3.8, "qat": False,
         "kv_kb_per_token": 34.8, "fixed_cache_gb": 0.15, "checkpoint_gb": 0.15, "max_ctx": 262144, "tok_s_9070xt": 50, "mtp": True, "vk_fix": True,
         "cpu_mapped_gb": 0.51,  # measured: ~521 MiB of the 12.2 GiB model stays CPU-mapped (large 248k vocab)
-        "scores": {"en/global": 81.5, "zh/global": 76.2, "zh/regional": 74.7, "es/global": 80.2, "es/regional": 76.8, "hi/global": 69.0, "hi/regional": 74.3, "ar/global": 70.8, "ar/regional": 71.2, "ja/global": 73.5, "ja/regional": 87.6, "th/regional": 67.1},
+        "scores": {"en/global": 81.5, "zh/global": 76.2, "zh/regional": 74.7, "es/global": 80.2, "es/regional": 76.8, "hi/global": 69.0, "hi/regional": 74.3, "ar/global": 70.8, "ar/regional": 71.2, "ja/global": 73.5, "ja/regional": 87.6, "th/regional": 67.1,
+                   "en/math": 94.4, "th/math": 87.2, "zh/math": 84.4},
         "note": "dense 27B; built-in MTP head drafts 2 tokens",
     },
     "gemma4-26b-a4b-qat": {
@@ -16,7 +17,8 @@ MODELS = {
         "kv_kb_per_token": 10.9, "fixed_cache_gb": 0.11, "checkpoint_gb": 0.11, "max_ctx": 262144, "tok_s_9070xt": 90, "mtp": False, "vk_fix": False,
         "moe": {"layers": 30, "expert_gb_per_layer": 0.4},  # from the GGUF: 11.96 GiB of experts over 30 layers
         "tok_s_offload": {8: 45, 13: 36, 18: 31},          # measured: layers' experts in RAM -> decode tok/s
-        "scores": {"en/global": 82.2, "zh/global": 73.5, "zh/regional": 66.5, "es/global": 74.5, "es/regional": 75.2, "hi/global": 69.5, "hi/regional": 71.0, "ar/global": 71.5, "ar/regional": 73.6, "ja/global": 74.5, "ja/regional": 81.9, "th/regional": 65.7},
+        "scores": {"en/global": 82.2, "zh/global": 73.5, "zh/regional": 66.5, "es/global": 74.5, "es/regional": 75.2, "hi/global": 69.5, "hi/regional": 71.0, "ar/global": 71.5, "ar/regional": 73.6, "ja/global": 74.5, "ja/regional": 81.9, "th/regional": 65.7,
+                   "en/math": 96.8, "th/math": 89.6, "zh/math": 88.8},
         "note": "MoE with ~4B active params: fastest",
     },
     "qwen3.8-27b-iq2": {

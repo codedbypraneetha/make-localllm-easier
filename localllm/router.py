@@ -143,9 +143,8 @@ def decide(body: dict, path: str, cfg: dict | None = None) -> Decision:
         lang = detect_language(_last_user(body))
         local = cfg.get("local_model")
         scores = catalog.MODELS.get(local, {}).get("scores", {}) if local else {}
-        mine = [v for k, v in scores.items() if k.startswith(lang + "/")]
-        if mine and sum(mine) / len(mine) < floor:
-            return Decision(f"cloud:{cloud.name} ({lang} score {sum(mine) / len(mine):.0f} < floor {floor})", cloud)
+        if any(k.startswith(lang + "/") for k in scores) and catalog.score(local, lang) < floor:
+            return Decision(f"cloud:{cloud.name} ({lang} score {catalog.score(local, lang):.0f} < floor {floor})", cloud)
     return Decision("local")
 
 
