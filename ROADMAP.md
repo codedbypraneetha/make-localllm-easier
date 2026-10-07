@@ -51,20 +51,21 @@ of GPT-4 quality while sending only 26% of requests to it.
       to the cloud when the local quant is below the quality floor) - nobody routes by language today
 - [x] `localllm route --test`: same prompt local vs cloud - answer, latency, cost (#7)
 
-## 0.4 - squeeze the GPU
+## 0.4 - squeeze the GPU (released)
+Result: `localllm tune` took Qwen3.8-27B from 21.7 to 55 tok/s on the same RX 9070 XT (2.5x); gemma-4 runs 124-128 tok/s with the per-model default.
 Evidence: ReBAR-off fix 1.7x on RX 9070 XT (ours) and 2.7x on RX 7900 XTX (#27097); MTP +40% on RDNA4 (ours), 1.86x on
 RTX 3090, but slower on Apple Metal; CUDA fusion + `GGML_CUDA_GRAPH_OPT=1` +17-42% on RTX 4090/5090; Vulkan vs ROCm
 winner on RDNA4 differs between decode and prefill.
 
-- [ ] Squeeze step on first run: `llama-bench` every available backend (CUDA / HIP / Vulkan / SYCL) x flash attention x
-      `-b/-ub`, cache the fastest per GPU + driver + model (#8)
-- [ ] Detect a small host-visible heap (Resizable BAR off) and set the Vulkan fix automatically, confirmed by A/B
-- [ ] `GGML_CUDA_GRAPH_OPT=1` on single-GPU NVIDIA
-- [ ] MTP only where it measures faster: A/B draft length 2/3/5 per GPU, keep it on above 1.1x
+- [x] `localllm tune`: measure candidate settings with real llama-server runs, keep only >= 1.1x wins, cache per GPU +
+      model + llama.cpp build (#8). Multi-backend sweep waits for a machine with more than one backend
+- [x] Detect a small host-visible heap (Resizable BAR off) and set the Vulkan fix automatically, confirmed by A/B
+- [ ] `GGML_CUDA_GRAPH_OPT=1` on single-GPU NVIDIA - implemented in `tune`, needs an NVIDIA owner to measure (#22)
+- [x] MTP only where it measures faster: A/B draft length 2/3/5 per GPU, keep it on above 1.1x
 - [ ] Pick the backend by workload: prefill-heavy (documents/RAG) vs decode-heavy (chat)
-- [ ] Remove DeltaNet recurrent-state copy overhead (CPY/GET_ROWS of 3 MB states) and upstream it (#9)
-- [ ] Faster load: 16 MiB upload staging buffers (1.2 s faster on a 12 GB model), skip the fit dry-run (#10)
-- [ ] Before/after speed table per GPU in the release notes (#11)
+- [x] DeltaNet recurrent-state copy overhead: it was the host-visible memory, fixed by the small-BAR fix (state ops 8.2 -> 0.9 ms per token) (#9)
+- [ ] Faster load: 16 MiB upload staging buffers (1.2 s faster on a 12 GB model) - patch ready on a fork, to be proposed upstream by the maintainer; `-fit off` already skips the dry-run (#10)
+- [x] Before/after speed table per GPU in the release notes (#11)
 
 ## 0.5 - compression research (ongoing, results published per language)
 Evidence: across 55 languages, 2-bit hurts non-Latin and low-resource languages most (Bengali -16 COMET vs ~-2 for
