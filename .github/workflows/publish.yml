@@ -1,8 +1,9 @@
 name: publish
-# Releases are uploaded from the maintainer's machine with twine (API token). This workflow is kept for PyPI Trusted
-# Publishing: once a trusted publisher is configured on pypi.org (owner phonology024, repo make-localllm-easier,
-# workflow publish.yml, environment pypi), run it from the Actions tab. It is manual so tags don't show false failures.
+# PyPI Trusted Publishing (configured on pypi.org: owner phonology024, repo make-localllm-easier, workflow publish.yml,
+# environment pypi). Runs on every v* tag; can also be started from the Actions tab. No API token is stored anywhere.
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
 jobs:
   pypi:
