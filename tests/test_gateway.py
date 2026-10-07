@@ -119,3 +119,14 @@ def test_router_forwards_to_cloud_with_key_and_model(monkeypatch):
 def test_detect_language():
     assert router.detect_language("สวัสดีครับ") == "th" and router.detect_language("こんにちは") == "ja"
     assert router.detect_language("hello world") == "en"
+
+
+def test_route_compare_local_and_cloud(monkeypatch):
+    up, uurl = _up(); cloud, curl = _up()
+    monkeypatch.setenv("FAKE_KEY", "k")
+    cfg = {"enabled": True, "providers": {"c": {"kind": "openai", "url": curl, "key_env": "FAKE_KEY", "model": "big",
+                                                "price_in": 3.0, "price_out": 15.0}}}
+    rows = router.compare("hi", uurl, cfg)
+    up.shutdown(); cloud.shutdown()
+    assert [r["target"] for r in rows] == ["local", "c"]
+    assert rows[1]["cost_usd"] == (3 * 3.0 + 2 * 15.0) / 1e6 and rows[0]["answer"] == "echo: hi"

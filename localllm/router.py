@@ -138,3 +138,34 @@ def decide(body: dict, path: str, cfg: dict | None = None) -> Decision:
         if mine and sum(mine) / len(mine) < floor:
             return Decision(f"cloud:{cloud.name} ({lang} score {sum(mine) / len(mine):.0f} < floor {floor})", cloud)
     return Decision("local")
+
+
+def compare(prompt: str, local_url: str, cfg: dict | None = None) -> list[dict]:
+    """`localllm route --test`: the same prompt to the local model and to each configured cloud provider."""
+    import time
+    import urllib.request
+    cfg = load_config() if cfg is None else cfg
+    body = {"messages": [{"role": "user", "content": prompt}], "max_tokens": 400,
+            "chat_template_kwargs": {"enable_thinking": False}}
+    targets = [("local", local_url.rstrip("/") + "/v1/chat/completions", {}, body, None)]
+    for p in providers(cfg).values():
+        if p.kind == "openai":
+            targets.append((p.name, p.url_base.rstrip("/") + "/v1/chat/completions", p.headers("/v1/chat/completions"),
+                            {"model": p.model, "messages": body["messages"], "max_tokens": 400},
+                            (cfg["providers"][p.name].get("price_in"), cfg["providers"][p.name].get("price_out"))))
+    rows = []
+    for name, url, hdrs, b, price in targets:
+        t0 = time.time()
+        try:
+            req = urllib.request.Request(url, data=json.dumps(b).encode(),
+                                         headers={"Content-Type": "application/json", **hdrs})
+            d = json.load(urllib.request.urlopen(req, timeout=300))
+            u = d.get("usage", {})
+            cost = None
+            if price and all(x is not None for x in price):
+                cost = (u.get("prompt_tokens", 0) * price[0] + u.get("completion_tokens", 0) * price[1]) / 1e6
+            rows.append({"target": name, "seconds": round(time.time() - t0, 2), "cost_usd": cost,
+                         "tokens": u.get("completion_tokens"), "answer": d["choices"][0]["message"].get("content", "")})
+        except Exception as e:  # report, don't crash the comparison
+            rows.append({"target": name, "error": str(e)})
+    return rows
