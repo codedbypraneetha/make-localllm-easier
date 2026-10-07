@@ -79,3 +79,10 @@ def test_resident_pool_routes_without_swaps(monkeypatch):
     assert th.headers["X-Localllm-Model"].startswith(G) and zh.headers["X-Localllm-Model"].startswith(Q)
     assert "swapped" not in zh.headers["X-Localllm-Model"] and len(launched) == 2
     p.close(); g.shutdown()
+
+
+def test_detect_translate():
+    assert router.detect_task("Translate into Thai: The meeting is at 3 pm.") == "translate"
+    assert router.detect_task("ช่วยแปลประโยคนี้เป็นภาษาอังกฤษ: วันนี้อากาศดี") == "translate"
+    assert router.detect_task("请把这句话翻译成英文：今天天气很好。") == "translate"
+    assert router.detect_task("How many people speak Thai?") == "general"

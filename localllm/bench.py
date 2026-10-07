@@ -11,6 +11,8 @@ Zero-shot, thinking off, one token: the answer is the option letter with the hig
 Task suites (opt-in with --suites, they generate text so they are slower):
   math      MGSM (Shi et al. 2022, CC-BY-SA-4.0): the same 250 grade-school word problems in 11 languages; the model
             reasons in text (thinking off) and the final number is compared exactly
+  translate FLORES-101 devtest (Goyal et al. 2021, CC-BY-SA-4.0): the same sentences in 101 languages; the first 100
+            are translated English -> language and language -> English, scored with chrF++ (0-100, higher is better)
 """
 from __future__ import annotations
 
@@ -38,7 +40,17 @@ THAIEXAM = "https://huggingface.co/datasets/typhoon-ai/thai_exam/resolve/main/da
 SYSTEM = "Answer the multiple-choice question. Reply with only the letter of the correct option."
 MGSM_LANGS = ["bn", "de", "en", "es", "fr", "ja", "ru", "sw", "te", "th", "zh"]
 MATH_SYSTEM = "Solve the problem step by step, briefly. End with a last line of the form 'Answer: <number>'."
-SUITES = ("global", "regional", "math")
+FLORES = {"af": "afr", "am": "amh", "ar": "ara", "bg": "bul", "bn": "ben", "ca": "cat", "cs": "ces", "cy": "cym",
+          "da": "dan", "de": "deu", "el": "ell", "es": "spa", "et": "est", "fa": "fas", "fi": "fin", "fr": "fra",
+          "gu": "guj", "he": "heb", "hi": "hin", "hr": "hrv", "hu": "hun", "hy": "hye", "id": "ind", "is": "isl",
+          "it": "ita", "ja": "jpn", "jv": "jav", "ka": "kat", "kk": "kaz", "km": "khm", "kn": "kan", "ko": "kor",
+          "lo": "lao", "lt": "lit", "lv": "lav", "mk": "mkd", "ml": "mal", "mn": "mon", "mr": "mar", "ms": "msa",
+          "my": "mya", "ne": "npi", "nl": "nld", "no": "nob", "pa": "pan", "pl": "pol", "pt": "por", "ro": "ron",
+          "ru": "rus", "sk": "slk", "sl": "slv", "sr": "srp", "sv": "swe", "sw": "swh", "ta": "tam", "te": "tel",
+          "th": "tha", "tl": "tgl", "tr": "tur", "uk": "ukr", "ur": "urd", "uz": "uzb", "vi": "vie", "yo": "yor",
+          "zh": "zho_simpl", "zu": "zul"}
+TRANSLATE_N = 100
+SUITES = ("global", "regional", "math", "translate")
 
 
 def system_language() -> str:
@@ -53,7 +65,8 @@ def system_language() -> str:
 
 
 def available(lang: str, suites: tuple[str, ...] = ("global", "regional")) -> list[str]:
-    have = {"global": lang in GLOBAL_LANGS, "regional": lang in INCLUDE or lang == "th", "math": lang in MGSM_LANGS}
+    have = {"global": lang in GLOBAL_LANGS, "regional": lang in INCLUDE or lang == "th", "math": lang in MGSM_LANGS,
+            "translate": lang in FLORES and lang != "en"}
     return [s for s in suites if have[s]]
 
 
@@ -86,6 +99,11 @@ def load(suite: str, lang: str) -> list[dict]:
                     keys = [c for c in "abcde" if r.get(c)]
                     items.append({"q": r["question"], "opts": [r[c] for c in keys],
                                   "ans": keys.index(r["answer"].strip().lower())})
+    elif suite == "translate" and lang in FLORES:
+        en = [r["sentence"] for r in _rows("gsarti/flores_101", "eng", "devtest")[:TRANSLATE_N]]
+        xx = [r["sentence"] for r in _rows("gsarti/flores_101", FLORES[lang], "devtest")[:TRANSLATE_N]]
+        items = [{"src": a, "ref": b, "to": lang} for a, b in zip(en, xx)] + \
+                [{"src": b, "ref": a, "to": "en"} for a, b in zip(en, xx)]
     elif suite == "math" and lang in MGSM_LANGS:
         for r in _rows("juletxara/mgsm", lang):
             items.append({"q": r["question"], "ans": int(r["answer_number"])})
@@ -141,6 +159,63 @@ def ask_math(url: str, item: dict) -> bool:
     return n is not None and abs(n - item["ans"]) < 1e-6
 
 
+def _ngrams(seq, n: int) -> dict:
+    out = {}
+    for i in range(len(seq) - n + 1):
+        g = tuple(seq[i:i + n])
+        out[g] = out.get(g, 0) + 1
+    return out
+
+
+PUNCT = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+
+
+def _words(sent: str) -> list[str]:
+    """Words with one leading/trailing ASCII punctuation mark split off, exactly like sacreBLEU's chrF++."""
+    out = []
+    for w in sent.split():
+        if len(w) > 1 and w[-1] in PUNCT:
+            out += [w[:-1], w[-1]]
+        elif len(w) > 1 and w[0] in PUNCT:
+            out += [w[0], w[1:]]
+        else:
+            out.append(w)
+    return out
+
+
+def chrf(hyp: str, ref: str, char_order: int = 6, word_order: int = 2, beta: float = 2.0) -> float:
+    """chrF++ (Popovic 2017; sacreBLEU's defaults): F-beta over character 1-6-grams (spaces removed) and word 1-2-grams,
+    averaged over n-gram orders. 0-100. Works for scripts without spaces (Thai, Chinese, Japanese) via the characters."""
+    hc, rc = hyp.replace(" ", ""), ref.replace(" ", "")
+    hw, rw = _words(hyp), _words(ref)
+    precs, recs = [], []
+    for seq_h, seq_r, orders in ((hc, rc, char_order), (hw, rw, word_order)):
+        for n in range(1, orders + 1):
+            h, r = _ngrams(seq_h, n), _ngrams(seq_r, n)
+            match = sum(min(c, r.get(g, 0)) for g, c in h.items())
+            if h and r:
+                precs.append(match / sum(h.values()))
+                recs.append(match / sum(r.values()))
+    if not precs:
+        return 0.0
+    p, r = sum(precs) / len(precs), sum(recs) / len(recs)
+    return 0.0 if p + r == 0 else round(100 * (1 + beta ** 2) * p * r / (beta ** 2 * p + r), 2)
+
+
+LANG_NAMES = {"en": "English", "zh": "Simplified Chinese"}
+
+
+def ask_translate(url: str, item: dict) -> float:
+    to = LANG_NAMES.get(item["to"]) or INCLUDE.get(item["to"]) or {"th": "Thai"}.get(item["to"], item["to"])
+    body = {"messages": [{"role": "system", "content": f"Translate the user's text into {to}. Reply with the translation only."},
+                         {"role": "user", "content": item["src"]}],
+            "max_tokens": 400, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}}
+    req = urllib.request.Request(url.rstrip("/") + "/v1/chat/completions", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    text = json.load(urllib.request.urlopen(req, timeout=600))["choices"][0]["message"].get("content") or ""
+    return chrf(text.strip(), item["ref"])
+
+
 def _save(name: str, res: dict) -> None:
     out = HOME / "results.json"
     allres = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
@@ -159,6 +234,13 @@ def run(url: str, name: str, langs: list[str], limit: int = 0, suites: tuple[str
         for suite in mine:
             items = load(suite, lang)
             items = items[:limit] if limit else items
+            if suite == "translate":          # a chrF++ score, not a right/wrong count
+                scores = [ask_translate(url, it) for it in items]
+                acc = round(sum(scores) / len(scores), 1)
+                res[f"{lang}/{suite}"] = {"acc": acc, "chrf": acc, "n": len(items)}
+                print(f"  {lang:3} {suite:9} chrF++ {acc:5.1f}  (en<->{lang}, {len(items)} sentences)", flush=True)
+                _save(name, {**res, "_meta": {"model": name, "seconds": round(time.time() - t0), "limit": limit}})
+                continue
             ok = sum(ask_math(url, it) if suite == "math" else ask(url, it) == it["ans"] for it in items)
             acc = round(100 * ok / len(items), 1)
             res[f"{lang}/{suite}"] = {"acc": acc, "correct": ok, "n": len(items)}

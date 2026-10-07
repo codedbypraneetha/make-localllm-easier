@@ -171,3 +171,14 @@ def test_math_answer_parsing():
 def test_quality_floor_and_qat():
     assert catalog.below_floor("qwen3.8-27b-iq2") and not catalog.below_floor("qwen3.8-27b-q3")
     assert not catalog.below_floor("gemma4-26b-a4b-qat")
+
+
+def test_chrf_matches_sacrebleu():
+    from localllm import bench
+    # reference values from sacrebleu 2.x CHRF(word_order=2).sentence_score
+    assert bench.chrf("The cat is on the mat.", "The cat sat on the mat.") == 67.49
+    assert bench.chrf("แมวนั่งบนเสื่อ", "แมวนั่งอยู่บนพรม") == 33.1
+    assert bench.chrf("我今天很高兴见到你。", "今天见到你我很高兴。") == 25.79
+    assert bench.chrf('(hello) "world", ok!', "hello world ok") == 38.43
+    assert bench.chrf("same", "same") == 100.0 and bench.chrf("", "x") == 0.0
+    assert bench.available("th", ("translate",)) == ["translate"] and bench.available("en", ("translate",)) == []

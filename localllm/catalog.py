@@ -30,7 +30,7 @@ MODELS = {
 }
 
 
-TASK_SUITES = {"general": ("global", "regional"), "math": ("math",)}
+TASK_SUITES = {"general": ("global", "regional"), "math": ("math",), "translate": ("translate",)}
 
 
 def score(key: str, lang: str | None = None, task: str = "general") -> float:

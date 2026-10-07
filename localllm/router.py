@@ -43,8 +43,14 @@ MATH = re.compile(r"(\d\s*[-+*/×÷^=]\s*\d|\b(calculate|how many|how much|total
                   r"คำนวณ|เท่าไร|เท่าไหร่|กี่|多少|几|计算|いくつ|何個|計算|كم|कितन)", re.I)
 
 
+TRANSLATE = re.compile(r"\b(translate|translation|traduce|traduis|traduza|übersetze|vertaal|terjemahkan|dịch)\b|"
+                       r"แปล|翻译|翻譯|翻訳|번역|ترجم|अनुवाद|перевед", re.I)
+
+
 def detect_task(text: str) -> str:
-    """Cheap task guess (no model): 'math' for word problems and arithmetic, else 'general'."""
+    """Cheap task guess (no model): 'translate', 'math' for word problems and arithmetic, else 'general'."""
+    if TRANSLATE.search(text[:200]):          # the request is usually stated up front
+        return "translate"
     return "math" if len(re.findall(r"\d+", text)) >= 2 and MATH.search(text) else "general"
 
 
