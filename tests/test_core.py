@@ -144,3 +144,8 @@ def test_moe_offload_on_a_12gb_card():
     assert catalog.cpu_moe_layers("qwen3.8-27b-q3", 12.0, 20) is None           # dense: no offload path
     a = runtime.server_args(runtime.Path("m"), None, 8080, 8192, False, ram_total_gb=32, cpu_moe=n)
     assert a[a.index("--n-cpu-moe") + 1] == str(n) and "--load-mode" not in a   # mmap when experts stay in RAM
+
+
+def test_quality_floor_and_qat():
+    assert catalog.below_floor("qwen3.8-27b-iq2") and not catalog.below_floor("qwen3.8-27b-q3")
+    assert not catalog.below_floor("gemma4-26b-a4b-qat")

@@ -158,6 +158,9 @@ def cmd_doctor(_a) -> None:
     in_ram = cpu_moe * m["moe"]["expert_gb_per_layer"] if cpu_moe else 0.0
     ctx = sizing.context_tokens(vram, {**m, "gb": m["gb"] - in_ram})
     print(f"\nBest measured model for you: {key}  ({m['note']})")
+    if catalog.below_floor(key):
+        print(f"  note: {m['bpw']} bits per weight is below the quality floor ({catalog.QUALITY_FLOOR_BPW}) - it fits, but"
+              " expect noticeably weaker answers, especially outside English")
     if cpu_moe:
         print(f"  doesn't fit the GPU whole: experts of {cpu_moe} of {m['moe']['layers']} layers ({in_ram:.1f} GB) stay in"
               " system RAM - works, but answers are slower than on a bigger card")
