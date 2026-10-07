@@ -1,39 +1,83 @@
 # Roadmap
 
-## 0.1 (now)
-- `localllm`: one command - detect GPU/RAM, pick the most accurate measured model for your language, download, start a tuned llama-server, open the chat page
-- `localllm doctor`: which model sizes this GPU suits, speed estimates, how much text the recommended model holds
-- `localllm eval`: global (Global-MMLU-Lite, 23 languages) + regional (INCLUDE, 44 countries; ThaiExam) multiple-choice scores
-- Tuned launch: small-BAR fix (`GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM=1`), MTP drafting for Qwen3.8, single-slot unified KV, `-fit off`
+Every release ships a before/after number measured on real hardware (one headline figure + a bar chart, e.g.
+"3x less RAM on the same chat"), so an upgrade is visible at a glance.
+
+Guiding principle (borrowed from how the Elysia web framework cut memory): **don't load, don't copy, don't run what
+isn't used** - skip unused model parts, share instead of duplicating caches, and specialise the launch per machine once.
+
+## 0.1 - one command (released)
+- `localllm`: detect GPU/RAM, pick the most accurate measured model for your language, download, start a tuned
+  llama-server, open the chat page
+- `localllm doctor`: which model sizes this GPU suits, speed estimates, how much text the chosen model holds
+- `localllm eval`: Global-MMLU-Lite (23 languages) + INCLUDE (44 countries) + ThaiExam, logprob scoring
+- Tuned launch: small-BAR fix, MTP drafting for Qwen3.8, single-slot unified KV, `-fit off`
 
 ## 0.2 - use less system RAM
-llama-server's defaults can add 10+ GB of system RAM on top of a model that sits entirely on the GPU. On a 16 GB PC that
-squeezes everything else.
+Evidence: llama-server defaults (`--cache-ram 8192` MiB prompt cache, `--ctx-checkpoints 32` per slot) took one Gemma 4
+user from 0.7 GB to 18 GB of RAM and out-of-memory in three generations; with 0-1 checkpoints it stayed at 0.4-1.5 GB
+(llama.cpp #21690, PR #16391).
 
-- [ ] Measure first: RAM over a long multi-turn chat, default vs tuned (prompt cache, context checkpoints, mmap vs `--load-mode none`)
-- [ ] `--cache-ram` (prompt cache, default 8 GiB) and `--ctx-checkpoints` (default 32 per slot; each holds a DeltaNet/SWA state of ~110-150 MB) sized to the PC's RAM, e.g. 16 GB -> 1 GiB / 4, 32 GB -> 2 GiB / 8
-- [ ] Check the speed cost of smaller caches (more prompt re-processing in long chats)
-- [ ] `localllm doctor`: show how much RAM the chosen model will use and how much stays free for other apps
-- [ ] MoE with experts in RAM: pick `--n-cpu-moe` from free RAM instead of failing or swapping
+- [ ] Measure RAM over a long chat, defaults vs tuned, Qwen3.8 + gemma-4 (#1)
+- [ ] Low-RAM profile by default for one user: `-np 1`, `--ctx-checkpoints` 0-4 (0-1 for hybrid/Gemma 4),
+      `--cache-ram` 0-1024 sized from installed RAM; check the speed cost (#2)
+- [ ] KV cache `q8_0` by default (half the KV memory, ~0.05% perplexity); `q4_0` K only as an opt-in after measuring
+      per language
+- [ ] Load mode: read weights straight to VRAM when the model is fully offloaded; mmap only when experts stay in RAM
+- [ ] Two-tier MoE estimate (VRAM + RAM) that warns when RAM is short - llama.cpp `--fit` assumes RAM is unlimited;
+      choose `--n-cpu-moe` from free RAM (#4)
+- [ ] `doctor`: RAM the model will use and what stays free; max context that fits on the GPU (#3)
+- [ ] Don't load unused parts: skip the vision projector without images, skip the MTP head when not drafting
+- [ ] Detect Windows "shared GPU memory" spill (VRAM silently overflowing into RAM) and say so
 
-## 0.3 - local AI that works with the cloud providers' APIs
-Most apps and SDKs speak one provider's API. Make the local model a drop-in for them, and let users mix local and cloud.
+## 0.3 - work with the cloud providers' APIs
+Evidence: llama-server already serves Anthropic `/v1/messages` (tools, vision, thinking) next to OpenAI
+`/v1/chat/completions`; Ollama >= 0.14 does too; LiteLLM routes/falls back across providers; RouteLLM's router keeps 95%
+of GPT-4 quality while sending only 26% of requests to it.
 
-- [ ] One local endpoint that speaks the OpenAI, Anthropic Messages, Gemini and Ollama APIs, so existing apps, SDKs and agents point at `localhost` with no code change
-- [ ] Hybrid routing: answer locally by default, send a request to the user's own cloud key (OpenAI / Anthropic / Google / OpenRouter) when it's too long, needs a tool or model the PC can't run, or the local model is busy; per-app rules, cost and privacy shown up front
-- [ ] Keys stay on the machine (OS keychain); nothing leaves the PC unless a rule sends it
-- [ ] `localllm route --test`: same prompt to local and cloud, compare answer, latency and cost
+- [ ] One local endpoint: pass OpenAI and Anthropic APIs straight through to llama-server; thin shims for Ollama
+      `/api/*` and Gemini `generateContent` (#5)
+- [ ] Hybrid routing, local first: forward to the user's own cloud key when the prompt is too long, needs a tool/model
+      the PC can't run, or the local model is busy; cost and privacy shown before sending; keys in the OS keychain (#6)
+- [ ] Quality-aware routing: thresholds calibrated from *our measured per-language scores* (e.g. send hard Thai or math
+      to the cloud when the local quant is below the quality floor) - nobody routes by language today
+- [ ] `localllm route --test`: same prompt local vs cloud - answer, latency, cost (#7)
 
 ## 0.4 - squeeze the GPU
-A release whose changelog is all speed, so people see the upgrade on the same hardware.
+Evidence: ReBAR-off fix 1.7x on RX 9070 XT (ours) and 2.7x on RX 7900 XTX (#27097); MTP +40% on RDNA4 (ours), 1.86x on
+RTX 3090, but slower on Apple Metal; CUDA fusion + `GGML_CUDA_GRAPH_OPT=1` +17-42% on RTX 4090/5090; Vulkan vs ROCm
+winner on RDNA4 differs between decode and prefill.
 
-- [ ] Auto-tune per GPU: short sweep of batch/ubatch, flash attention, KV cache type, MTP draft length, thread count; keep the fastest and remember it
-- [ ] Fix the remaining per-token overhead found on RDNA4: recurrent-state copies in DeltaNet models (CPY/GET_ROWS of 3 MB states), upstream the fixes to llama.cpp
-- [ ] Faster model load: larger upload staging buffers (16 MiB measured 1.2 s faster on a 12 GB model), skip the fit dry-run when the plan is known
-- [ ] Speculative decoding wherever it pays: MTP heads, matching small draft models, prompt lookup for code/edit tasks
-- [ ] Before/after table per GPU in the release notes, measured with `localllm bench`
+- [ ] Squeeze step on first run: `llama-bench` every available backend (CUDA / HIP / Vulkan / SYCL) x flash attention x
+      `-b/-ub`, cache the fastest per GPU + driver + model (#8)
+- [ ] Detect a small host-visible heap (Resizable BAR off) and set the Vulkan fix automatically, confirmed by A/B
+- [ ] `GGML_CUDA_GRAPH_OPT=1` on single-GPU NVIDIA
+- [ ] MTP only where it measures faster: A/B draft length 2/3/5 per GPU, keep it on above 1.1x
+- [ ] Pick the backend by workload: prefill-heavy (documents/RAG) vs decode-heavy (chat)
+- [ ] Remove DeltaNet recurrent-state copy overhead (CPY/GET_ROWS of 3 MB states) and upstream it (#9)
+- [ ] Faster load: 16 MiB upload staging buffers (1.2 s faster on a 12 GB model), skip the fit dry-run (#10)
+- [ ] Before/after speed table per GPU in the release notes (#11)
+
+## 0.5 - compression research (ongoing, results published per language)
+Evidence: across 55 languages, 2-bit hurts non-Latin and low-resource languages most (Bengali -16 COMET vs ~-2 for
+Japanese/French); language-specific imatrix helps only at 2-bit (~+3) and not at 4-bit (+-0.2) - matching our Thai null
+result at 3.5 bpw. Below ~3 bits the weights are effectively restructured, so calibration alone can't fix it (ParetoQ).
+
+- [ ] Quality floor: never recommend below UD-Q2_K_XL-class quants; warn below it
+- [ ] Rank vendor QAT checkpoints (e.g. Gemma QAT) above post-training quants of the same model
+- [ ] Per-language metric: KL divergence / top-1 agreement vs the BF16 model, not English perplexity
+- [ ] Sensitivity-aware recipes: measure KLD per tensor, emit `--tensor-type` overrides, keep embeddings/output higher
+      for non-Latin scripts
+- [ ] Mixed multilingual chat-format imatrix (EN+TH+HI+AR+code+math) vs EN-only vs single-language, at 2-bit
+- [ ] Better 2-bit formats on the multilingual set: IQ2_KT / IQ2_KL (ik_llama.cpp) and EXL3 ~2.5 bpw
+- [ ] LoRA self-distillation of a 2-bit 27B from its Q8 teacher (no one has measured this per language yet)
+- [ ] Vocabulary trimming per language for GGUF (no tool exists): smaller embedding/output and faster output layer,
+      most useful on 1-4B models
+- [ ] Publish every measured quant with its per-language scores on Hugging Face
 
 ## Later
-- Language-calibrated quantizations (imatrix from each language's text), published per language with before/after scores
+- Shared prefix cache (block/radix, like vLLM/SGLang) instead of per-slot prompt copies - needs llama.cpp work
 - More measured GPUs: `localllm eval` results from contributors feed the catalog
 - Writing-quality evaluation (not just multiple choice)
+
+Research behind this roadmap, with sources and numbers (Thai): [docs/research-th.md](docs/research-th.md).

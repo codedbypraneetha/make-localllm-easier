@@ -107,7 +107,7 @@ reasoning in multiple choice, not writing quality.
 
 The catalog only grows with measurements. Run `localllm eval --langs en,<yours>` on your GPU and open a PR with
 `~/.localllm/results.json` and your GPU name. Other languages' local exams are very welcome. See [ROADMAP.md](ROADMAP.md)
-for what's next: using less system RAM (0.2), working alongside cloud provider APIs (0.3), and a speed-only release (0.4).
+for what's next: using less system RAM (0.2), working alongside cloud provider APIs (0.3), a speed-only release (0.4), and per-language compression research (0.5).
 
 ## License
 
