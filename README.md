@@ -144,8 +144,8 @@ the same, on held-out Wikipedia text (8 x 512 tokens per language; `tools/kld_pe
 | UD-IQ2_S (Unsloth) | 7.8 GB | 0.188 / 81.5% | 0.224 / 77.5% | 0.291 / 84.4% | 0.111 / 86.0% |
 | IQ2_S, our mixed imatrix, from BF16 | 7.8 GB | 0.210 / 81.8% | 0.215 / 77.1% | 0.365 / 82.1% | 0.137 / 83.6% |
 
-Going from 3 to 2 bits multiplies the damage 4-6x in Thai, Hindi and Arabic and 5x in English - but the non-English
-languages start from a lower top-token agreement and end 2-9 points below English, which matches the benchmark losses.
+Going from 3 to 2 bits multiplies the KL divergence 4-6x in every language, and top-token agreement ends 2-9 points
+lower in Arabic, Thai and Hindi than in English - the same order as the benchmark losses.
 
 ## How the benchmark works
 
