@@ -41,6 +41,9 @@ buffers in a 256 MB host-visible heap backed by system RAM and decode drops up t
 **Can I chat with a local LLM in the terminal?** Yes: `localllm chat`. Answers stream as they're written, the
 conversation is remembered, `/save` writes it to a file, `/think` shows the model's reasoning, Ctrl+C stops an answer.
 
+**How much RAM does a local LLM need?** With the model fully on the GPU, about 2-2.5 GB of system RAM with `localllm`
+(vs ~9 GB growing with llama-server's defaults). `localllm doctor` prints the estimate for your PC.
+
 **Does it work offline?** After the first download, yes. Nothing leaves your PC.
 
 **Which languages are measured?** 23 languages on Global-MMLU-Lite, 44 countries' own exams on INCLUDE, plus Thai
@@ -69,6 +72,19 @@ What it can do here:
 ```
 
 Speeds marked *est.* come from your card's memory bandwidth, calibrated on measured runs. Everything else is measured.
+
+## Less RAM than running llama.cpp yourself (0.2)
+
+llama-server's defaults keep a prompt cache of up to 8 GiB plus 32 conversation checkpoints in system RAM, so RAM keeps
+growing while you chat. `localllm` sizes both to your PC. Same 30-turn chat, RX 9070 XT, 32 GB RAM:
+
+| model | llama.cpp defaults | `localllm` | speed |
+|---|---|---|---|
+| Qwen3.8-27B Q3 | 9.30 GB RAM | **2.37 GB** | 35.2 tok/s both |
+| gemma-4-26B-A4B QAT | 9.24 GB RAM | **2.21 GB** | ~85 tok/s both |
+
+About **4x less RAM, same speed, ~15% less CPU per answer, ~0% CPU while idle.** On cards too small for gemma-4, its
+experts can stay in RAM: 45 / 36 / 31 tok/s with 8 / 13 / 18 layers' experts off the GPU (12 / 10 / 8 GB cards).
 
 ## Measured results (RX 9070 XT 16 GB, Windows 11, llama.cpp Vulkan)
 

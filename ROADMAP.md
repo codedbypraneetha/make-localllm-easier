@@ -17,24 +17,25 @@ isn't used** - skip unused model parts, share instead of duplicating caches, and
 - `localllm eval`: Global-MMLU-Lite (23 languages) + INCLUDE (44 countries) + ThaiExam, logprob scoring
 - Tuned launch: small-BAR fix, MTP drafting for Qwen3.8, single-slot unified KV, `-fit off`
 
-## 0.2 - use less system RAM
+## 0.2 - use less system RAM (released)
+Result: 4x less RAM over a 30-turn chat (Qwen3.8 9.30 -> 2.37 GB, gemma-4 9.24 -> 2.21 GB), same speed, ~15% less CPU.
 Evidence: llama-server defaults (`--cache-ram 8192` MiB prompt cache, `--ctx-checkpoints 32` per slot) took one Gemma 4
 user from 0.7 GB to 18 GB of RAM and out-of-memory in three generations; with 0-1 checkpoints it stayed at 0.4-1.5 GB
 (llama.cpp #21690, PR #16391).
 
 - [x] `localllm chat`: terminal chat with streaming, history, /save, /think, Ctrl+C to stop (tested on gemma-4, 85-88 tok/s)
-- [ ] Measure RAM over a long chat, defaults vs tuned, Qwen3.8 + gemma-4 (#1)
-- [ ] Low-RAM profile by default for one user: `-np 1`, `--ctx-checkpoints` 0-4 (0-1 for hybrid/Gemma 4),
+- [x] Measure RAM over a long chat, defaults vs tuned, Qwen3.8 + gemma-4 (#1)
+- [x] Low-RAM profile by default for one user: `-np 1`, `--ctx-checkpoints` 0-4 (0-1 for hybrid/Gemma 4),
       `--cache-ram` 0-1024 sized from installed RAM; check the speed cost (#2)
-- [ ] KV cache `q8_0` by default (half the KV memory, ~0.05% perplexity); `q4_0` K only as an opt-in after measuring
+- [x] KV cache `q8_0` by default (half the KV memory, ~0.05% perplexity); `q4_0` K only as an opt-in after measuring
       per language
-- [ ] Load mode: read weights straight to VRAM when the model is fully offloaded; mmap only when experts stay in RAM
-- [ ] Two-tier MoE estimate (VRAM + RAM) that warns when RAM is short - llama.cpp `--fit` assumes RAM is unlimited;
+- [x] Load mode: read weights straight into place (measured: mmap kept the whole file resident, 13.5 vs 6.1 GB even with experts in RAM)
+- [x] Two-tier MoE estimate (VRAM + RAM) that warns when RAM is short - llama.cpp `--fit` assumes RAM is unlimited;
       choose `--n-cpu-moe` from free RAM (#4)
-- [ ] `doctor`: RAM the model will use and what stays free; max context that fits on the GPU (#3)
-- [ ] Don't load unused parts: skip the vision projector without images, skip the MTP head when not drafting
-- [ ] Measure and minimise CPU use: idle and busy llama-server CPU, thread count, busy-waiting (#33)
-- [ ] Detect Windows "shared GPU memory" spill (VRAM silently overflowing into RAM) and say so
+- [x] `doctor`: RAM the model will use and what stays free; max context that fits on the GPU (#3)
+- [x] Don't load unused parts: skip the vision projector without images, skip the MTP head when not drafting
+- [x] Measure and minimise CPU use: idle and busy llama-server CPU, thread count, busy-waiting (#33)
+- [x] Detect Windows "shared GPU memory" spill (VRAM silently overflowing into RAM) and say so
 
 ## 0.3 - work with the cloud providers' APIs
 Evidence: llama-server already serves Anthropic `/v1/messages` (tools, vision, thinking) next to OpenAI
