@@ -5,6 +5,7 @@
   localllm list             every model we have measured
   localllm tune             measure the fastest llama.cpp settings for this PC once (kept only if >= 1.1x faster)
   localllm chat             chat in this terminal (starts the model if it isn't running)
+  localllm route [--test P] routing config; compare one prompt local vs your cloud keys
   localllm serve [MODEL]    start an OpenAI-compatible server only (http://127.0.0.1:8080/v1)
   localllm eval             score a running server in English + your language (global and local exams)
 """
@@ -63,6 +64,13 @@ def _machine():
     return server, devs, runtime.best_device(devs), runtime.ram_gb()
 
 
+def _free_port() -> int:
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 def _start(key: str | None, port: int, ctx: int) -> tuple[subprocess.Popen, str]:
     server, _devs, dev, _ram = _machine()
     from .bench import system_language
@@ -77,12 +85,13 @@ def _start(key: str | None, port: int, ctx: int) -> tuple[subprocess.Popen, str]
     from . import tune
     tuned = tune.load().get(tune.machine_key(dev["name"] if dev else "cpu", model.name, server))
     mtp = (tuned["mtp"] if tuned else catalog.MODELS[key]["mtp"]) if catalog.MODELS[key]["mtp"] else False
-    args = runtime.server_args(model, dev["id"] if dev else None, port, ctx, mtp, cpu_moe=cpu_moe)
+    inner = _free_port()   # llama-server listens privately; the gateway on `port` speaks OpenAI/Anthropic/Ollama/Gemini
+    args = runtime.server_args(model, dev["id"] if dev else None, inner, ctx, mtp, cpu_moe=cpu_moe)
     runtime.HOME.mkdir(parents=True, exist_ok=True)
     log = open(runtime.HOME / "llama-server.log", "ab")
     proc = subprocess.Popen([str(server), *args], env=runtime.server_env(tuned), stdout=log, stderr=subprocess.STDOUT)
     _say(f"loading {key} on {dev['name'] if dev else 'CPU'} ...")
-    url = f"http://127.0.0.1:{port}"
+    url = f"http://127.0.0.1:{inner}"
     for _ in range(1000):
         if proc.poll() is not None:
             sys.exit(f"[localllm] llama-server stopped (exit {proc.returncode}); log: {runtime.HOME / 'llama-server.log'}")
@@ -92,7 +101,9 @@ def _start(key: str | None, port: int, ctx: int) -> tuple[subprocess.Popen, str]
                 if spill and spill > runtime.SPILL_WARN_GB:
                     _say(f"warning: {spill:.1f} GB of the model spilled from the GPU into system RAM - answers will be "
                          "slower. Close other GPU-heavy apps or pick a smaller model (`localllm list`).")
-                return proc, url
+                from . import gateway
+                proc.gateway = gateway.serve(url, port=port, model_name=key)
+                return proc, f"http://127.0.0.1:{port}"
         except OSError:
             pass
         time.sleep(0.3)
@@ -102,7 +113,8 @@ def _start(key: str | None, port: int, ctx: int) -> tuple[subprocess.Popen, str]
 
 def cmd_run(a) -> None:
     proc, url = _start(a.model, a.port, a.ctx)
-    _say(f"ready. chat: {url}   API (OpenAI-compatible): {url}/v1   Ctrl+C to stop")
+    _say(f"ready. chat: {url}   API: {url}/v1 (OpenAI), {url}/v1/messages (Anthropic), {url}/api (Ollama), "
+         f"{url}/v1beta (Gemini)   Ctrl+C to stop")
     if not a.no_browser:
         webbrowser.open(url)
     try:
@@ -142,6 +154,30 @@ def cmd_tune(a) -> None:
     chosen = tune.run(server, model, dev["name"], base, bool(catalog.MODELS[key]["mtp"]), log=lambda s: _say("  " + s))
     _say(f"kept: env {chosen['env'] or 'none'}, MTP draft {chosen['mtp'] or 'off'} -> {chosen['tok_s']} tok/s "
          f"(saved to {tune.CACHE})")
+
+
+def cmd_route(a) -> None:
+    from . import chat, router
+    cfg = router.load_config()
+    if not a.test:
+        print(f"config: {router.CONFIG}  (routing {'ON' if cfg.get('enabled') else 'OFF - everything stays local'})")
+        print(f"cloud keys found: {', '.join(router.providers(cfg)) or 'none'}")
+        print(router.__doc__.split("Example")[1] if "Example" in router.__doc__ else "")
+        return
+    url = f"http://127.0.0.1:{a.port}"
+    proc = None
+    if not chat.server_alive(url):
+        proc, url = _start(None, a.port, 8192)
+    try:
+        for r in router.compare(a.test, url, cfg):
+            if "error" in r:
+                print(f"--- {r['target']}: error {r['error']}")
+                continue
+            cost = f", ${r['cost_usd']:.5f}" if r.get("cost_usd") is not None else (", free (local)" if r["target"] == "local" else "")
+            print(f"--- {r['target']}: {r['seconds']} s, {r['tokens']} tokens{cost}\n{r['answer'][:600]}\n")
+    finally:
+        if proc:
+            proc.terminate()
 
 
 def cmd_serve(a) -> None:
@@ -242,6 +278,9 @@ def main() -> None:
     c.add_argument("--url", help="chat with an already running OpenAI-compatible server instead")
     c.add_argument("--port", type=int, default=8080); c.add_argument("--ctx", type=int, default=8192)
     c.set_defaults(fn=cmd_chat)
+    r = sub.add_parser("route", help="show routing config, or --test a prompt local vs cloud")
+    r.add_argument("--test", metavar="PROMPT"); r.add_argument("--port", type=int, default=8080)
+    r.set_defaults(fn=cmd_route)
     s = sub.add_parser("serve"); s.add_argument("model", nargs="?", choices=list(catalog.MODELS))
     s.add_argument("--port", type=int, default=8080); s.add_argument("--ctx", type=int, default=8192)
     s.set_defaults(fn=cmd_serve)
