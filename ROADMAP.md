@@ -67,17 +67,19 @@ winner on RDNA4 differs between decode and prefill.
 - [ ] Faster load: 16 MiB upload staging buffers (1.2 s faster on a 12 GB model) - patch ready on a fork, to be proposed upstream by the maintainer; `-fit off` already skips the dry-run (#10)
 - [x] Before/after speed table per GPU in the release notes (#11)
 
-## 0.5 - compression research (ongoing, results published per language)
+## 0.5 - compression research (0.5.0 released; research items stay open)
 Evidence: across 55 languages, 2-bit hurts non-Latin and low-resource languages most (Bengali -16 COMET vs ~-2 for
 Japanese/French); language-specific imatrix helps only at 2-bit (~+3) and not at 4-bit (+-0.2) - matching our Thai null
 result at 3.5 bpw. Below ~3 bits the weights are effectively restructured, so calibration alone can't fix it (ParetoQ).
 
-- [ ] Quality floor: never recommend below UD-Q2_K_XL-class quants; warn below it
-- [ ] Rank vendor QAT checkpoints (e.g. Gemma QAT) above post-training quants of the same model
-- [ ] Per-language metric: KL divergence / top-1 agreement vs the BF16 model, not English perplexity
+- [x] Quality floor: never recommend below UD-Q2_K_XL-class quants; warn below it
+- [x] Rank vendor QAT checkpoints (e.g. Gemma QAT) above post-training quants of the same model
+- [x] Per-language metric: KL divergence / top-1 agreement vs a reference model, not English perplexity
+      (`tools/kld_per_language.py`; Q3_K_XL vs UD-IQ2_S table in the README)
 - [ ] Sensitivity-aware recipes: measure KLD per tensor, emit `--tensor-type` overrides, keep embeddings/output higher
       for non-Latin scripts
-- [ ] Mixed multilingual chat-format imatrix (EN+TH+HI+AR+code+math) vs EN-only vs single-language, at 2-bit
+- [x] Mixed multilingual chat-format imatrix (EN+TH+HI+AR+code+math) vs EN-only vs single-language, at 2-bit
+      (result: helps only when re-quantizing from Q8; built from BF16 it lost to Unsloth's UD-IQ2_S in 3 of 4 languages)
 - [ ] Better 2-bit formats on the multilingual set: IQ2_KT / IQ2_KL (ik_llama.cpp) and EXL3 ~2.5 bpw
 - [ ] LoRA self-distillation of a 2-bit 27B from its Q8 teacher (no one has measured this per language yet)
 - [ ] Vocabulary trimming per language for GGUF (no tool exists): smaller embedding/output and faster output layer,
