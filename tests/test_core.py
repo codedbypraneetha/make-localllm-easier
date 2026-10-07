@@ -134,3 +134,13 @@ def test_ram_estimate_drops_with_low_ram_profile():
 def test_gpu_spill_probe_is_safe_for_unknown_pid():
     v = runtime.gpu_spill_gb(999999)
     assert v is None or v == 0.0
+
+
+def test_moe_offload_on_a_12gb_card():
+    assert catalog.cpu_moe_layers("gemma4-26b-a4b-qat", 15.9, 20) == 0          # fits whole
+    n = catalog.cpu_moe_layers("gemma4-26b-a4b-qat", 12.0, 20)
+    assert n and 0 < n <= 30                                                     # some experts to RAM
+    assert catalog.cpu_moe_layers("gemma4-26b-a4b-qat", 12.0, 1) is None        # not enough RAM
+    assert catalog.cpu_moe_layers("qwen3.8-27b-q3", 12.0, 20) is None           # dense: no offload path
+    a = runtime.server_args(runtime.Path("m"), None, 8080, 8192, False, ram_total_gb=32, cpu_moe=n)
+    assert a[a.index("--n-cpu-moe") + 1] == str(n) and "--load-mode" not in a   # mmap when experts stay in RAM

@@ -65,11 +65,15 @@ def _machine():
 def _start(key: str | None, port: int, ctx: int) -> tuple[subprocess.Popen, str]:
     server, _devs, dev, _ram = _machine()
     from .bench import system_language
-    key = key or (catalog.pick(dev["total_gb"], system_language()) if dev else None)
+    ram_free = runtime.ram_available_gb()
+    key = key or (catalog.pick(dev["total_gb"], system_language(), ram_free) if dev else None)
     if not key:
         sys.exit("[localllm] no measured model fits this GPU yet (need >= 10 GB VRAM). See `localllm list`.")
+    cpu_moe = (catalog.cpu_moe_layers(key, dev["total_gb"], ram_free) or 0) if dev else 0
+    if cpu_moe:
+        _say(f"{key} doesn't fit the GPU whole: keeping the experts of {cpu_moe} layers in system RAM")
     model = _model_path(key)
-    args = runtime.server_args(model, dev["id"] if dev else None, port, ctx, catalog.MODELS[key]["mtp"])
+    args = runtime.server_args(model, dev["id"] if dev else None, port, ctx, catalog.MODELS[key]["mtp"], cpu_moe=cpu_moe)
     runtime.HOME.mkdir(parents=True, exist_ok=True)
     log = open(runtime.HOME / "llama-server.log", "ab")
     proc = subprocess.Popen([str(server), *args], env=runtime.server_env(), stdout=log, stderr=subprocess.STDOUT)
@@ -144,13 +148,19 @@ def cmd_doctor(_a) -> None:
                 "offload-dense": f"{r['quant']} {r['gb']} GB with layers in RAM - very slow (< 5 tok/s)",
                 "too-big": f"needs ~{r['gb']} GB - too big for this PC"}[r["status"]]
         print(f"  [{ICON[r['status']]}] {r['shape']:24} {what}")
-    key = catalog.pick(vram, lang) if dev else None
+    ram_avail = runtime.ram_available_gb()
+    key = catalog.pick(vram, lang, ram_avail) if dev else None
     if not key:
         print("\nNo measured model fits this GPU yet. Run `localllm list`, or help by measuring one (`localllm eval`).")
         return
     m = catalog.MODELS[key]
-    ctx = sizing.context_tokens(vram, m)
+    cpu_moe = catalog.cpu_moe_layers(key, vram, ram_avail) or 0
+    in_ram = cpu_moe * m["moe"]["expert_gb_per_layer"] if cpu_moe else 0.0
+    ctx = sizing.context_tokens(vram, {**m, "gb": m["gb"] - in_ram})
     print(f"\nBest measured model for you: {key}  ({m['note']})")
+    if cpu_moe:
+        print(f"  doesn't fit the GPU whole: experts of {cpu_moe} of {m['moe']['layers']} layers ({in_ram:.1f} GB) stay in"
+              " system RAM - works, but answers are slower than on a bigger card")
     print("What it can do here:")
     shown = [t for t in sorted(m["scores"]) if t.split("/")[0] in (lang, "en")]
     others = sorted({t.split("/")[0] for t in m["scores"]} - {lang, "en"})
@@ -163,16 +173,17 @@ def cmd_doctor(_a) -> None:
     if others:
         print(f"  also measured in {', '.join(others)} (`localllm list`)")
     print(f"  holds ~{ctx // 1000}k tokens at once (~{ctx // sizing.TOKENS_PER_PAGE} pages of text) next to the model")
-    launch = runtime.server_args(Path(m["file"]), dev["id"] if dev else None, 8080, ctx, m["mtp"])
+    launch = runtime.server_args(Path(m["file"]), dev["id"] if dev else None, 8080, ctx, m["mtp"], cpu_moe=cpu_moe)
     ram_est = sizing.ram_estimate_gb(m, launch)
-    ram_free = max(0.0, runtime.ram_available_gb() - ram_est["total_gb"])
+    ram_est["total_gb"] = round(ram_est["total_gb"] + in_ram, 1)
+    ram_free = max(0.0, ram_avail - ram_est["total_gb"])
     print(f"  uses ~{ram_est['total_gb']:.1f} GB of system RAM: ~{ram_est['embed_gb']:.1f} GB embeddings/CPU-mapped"
           f" + ~{ram_est['prompt_cache_gb']:.1f} GB prompt cache + ~{ram_est['checkpoints_gb']:.1f} GB ctx checkpoints"
           f" + ~{ram_est['host_gb']:.1f} GB host (est.)")
     print(f"  leaves ~{ram_free:.0f} GB of RAM free for other apps (est.)")
     same = bw == sizing.BANDWIDTH["rx 9070 xt"]
     est = m["tok_s_9070xt"] if same else (int(m["tok_s_9070xt"] * bw / 640) if bw else None)
-    if est:
+    if est and not cpu_moe:
         print(f"  answers at ~{est} tok/s" + ("" if same else " (estimated from memory bandwidth)"))
     print(f"\nRun it: localllm        (llama.cpp: {server})")
 

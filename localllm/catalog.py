@@ -14,6 +14,7 @@ MODELS = {
     "gemma4-26b-a4b-qat": {
         "repo": "unsloth/gemma-4-26B-A4B-it-qat-GGUF", "file": "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf", "gb": 13.3,
         "kv_kb_per_token": 10.9, "fixed_cache_gb": 0.11, "max_ctx": 262144, "tok_s_9070xt": 69, "mtp": False,
+        "moe": {"layers": 30, "expert_gb_per_layer": 0.4},  # from the GGUF: 11.96 GiB of experts over 30 layers
         "scores": {"en/global": 82.2, "zh/global": 73.5, "zh/regional": 66.5, "es/global": 74.5, "es/regional": 75.2, "hi/global": 69.5, "hi/regional": 71.0, "ar/global": 71.5, "ar/regional": 73.6, "ja/global": 74.5, "ja/regional": 81.9, "th/regional": 65.7},
         "note": "MoE with ~4B active params: fastest",
     },
@@ -42,13 +43,48 @@ def fits(key: str, vram_gb: float) -> bool:
     return context_tokens(vram_gb, MODELS[key]) >= MIN_CTX
 
 
+def cpu_moe_layers(key: str, vram_gb: float, ram_free_gb: float) -> int | None:
+    """MoE models that don't fit the card whole: how many layers' experts to keep in RAM (llama.cpp --n-cpu-moe)
+    so the rest plus an 8k context fit on the GPU. 0 = fits whole; None = not possible on this PC."""
+    from .sizing import context_tokens
+    m = MODELS[key]
+    if fits(key, vram_gb):
+        return 0
+    if "moe" not in m:
+        return None
+    per = m["moe"]["expert_gb_per_layer"]
+    for n in range(1, m["moe"]["layers"] + 1):
+        if n * per > 0.7 * ram_free_gb:
+            return None
+        if context_tokens(vram_gb, {**m, "gb": m["gb"] - n * per}) >= MIN_CTX:
+            return n
+    return None
+
+
 TIE_POINTS = 2.0   # accuracy gaps this small are inside the benchmark's margin: prefer the faster model
 
 
-def pick(vram_gb: float, lang: str | None = None) -> str | None:
-    """Most accurate model (for `lang` when measured) that fits the card whole with an 8k context; near-ties go to speed."""
-    ok = [k for k in MODELS if fits(k, vram_gb)]
+OFFLOAD_SPEED = 0.5   # placeholder share of full-GPU speed with experts in RAM; replaced by measurements per model
+
+
+def speed(key: str, vram_gb: float, ram_free_gb: float = 0.0) -> float:
+    """Expected decode tok/s on this card: measured speed, scaled down when experts have to stay in RAM."""
+    m = MODELS[key]
+    n = cpu_moe_layers(key, vram_gb, ram_free_gb) or 0
+    if not n:
+        return m["tok_s_9070xt"]
+    measured = m.get("tok_s_offload", {})          # {layers in RAM: tok/s} measured on the reference card
+    if measured:
+        nearest = min(measured, key=lambda k: abs(int(k) - n))
+        return measured[nearest]
+    return m["tok_s_9070xt"] * OFFLOAD_SPEED
+
+
+def pick(vram_gb: float, lang: str | None = None, ram_free_gb: float = 0.0) -> str | None:
+    """Most accurate model (for `lang` when measured) that runs on this PC - whole on the GPU, or a MoE with some
+    experts in RAM - with an 8k context; near-ties go to the faster one."""
+    ok = [k for k in MODELS if cpu_moe_layers(k, vram_gb, ram_free_gb) is not None]
     if not ok:
         return None
     best = max(score(k, lang) for k in ok)
-    return max((k for k in ok if score(k, lang) >= best - TIE_POINTS), key=lambda k: MODELS[k]["tok_s_9070xt"])
+    return max((k for k in ok if score(k, lang) >= best - TIE_POINTS), key=lambda k: speed(k, vram_gb, ram_free_gb))
