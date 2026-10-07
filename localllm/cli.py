@@ -15,6 +15,7 @@ import argparse
 import os
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 import webbrowser
@@ -110,6 +111,13 @@ def _start(key: str | None, port: int, ctx: int, models: str | None = None):
     return proc, f"http://127.0.0.1:{port}"
 
 
+def _warn_spill(pid: int) -> None:
+    spill = runtime.gpu_spill_gb(pid)
+    if spill and spill > runtime.SPILL_WARN_GB:
+        _say(f"warning: {spill:.1f} GB of the model spilled from the GPU into system RAM - answers will be "
+             "slower. Close other GPU-heavy apps or pick a smaller model (`localllm list`).")
+
+
 def _launch(key: str, server, dev, ctx: int, ram_free: float) -> tuple[subprocess.Popen, str]:
     """Start llama-server for `key` on a private port; return once it answers /health."""
     cpu_moe = (catalog.cpu_moe_layers(key, dev["total_gb"], ram_free) or 0) if dev else 0
@@ -126,19 +134,16 @@ def _launch(key: str, server, dev, ctx: int, ram_free: float) -> tuple[subproces
     proc = subprocess.Popen([str(server), *args], env=runtime.server_env(tuned, catalog.MODELS[key].get("vk_fix", True)), stdout=log, stderr=subprocess.STDOUT)
     _say(f"loading {key} on {dev['name'] if dev else 'CPU'} ...")
     url = f"http://127.0.0.1:{inner}"
-    for _ in range(1000):
+    for _ in range(3000):
         if proc.poll() is not None:
             sys.exit(f"[localllm] llama-server stopped (exit {proc.returncode}); log: {runtime.HOME / 'llama-server.log'}")
         try:
             if b'"ok"' in urllib.request.urlopen(url + "/health", timeout=2).read():
-                spill = runtime.gpu_spill_gb(proc.pid)
-                if spill and spill > runtime.SPILL_WARN_GB:
-                    _say(f"warning: {spill:.1f} GB of the model spilled from the GPU into system RAM - answers will be "
-                         "slower. Close other GPU-heavy apps or pick a smaller model (`localllm list`).")
+                threading.Thread(target=_warn_spill, args=(proc.pid,), daemon=True).start()   # ~1.5 s: off the path
                 return proc, url
         except OSError:
             pass
-        time.sleep(0.3)
+        time.sleep(0.1)   # poll fast: every 100 ms counts in a model swap
     proc.kill()
     sys.exit("[localllm] model did not load within 5 minutes")
 
