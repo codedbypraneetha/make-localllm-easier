@@ -1,0 +1,65 @@
+# Use localllm from any app: OpenAI, Anthropic, Ollama and Gemini APIs
+
+`localllm` (and `localllm serve`) puts one endpoint at `http://127.0.0.1:8080` in front of the local model. Point the
+app or SDK you already use at it - no code change beyond the base URL. Any API key value works locally.
+
+| API your app speaks | Base URL | Endpoints |
+|---|---|---|
+| OpenAI | `http://127.0.0.1:8080/v1` | `/chat/completions`, `/completions`, `/models`, `/embeddings` |
+| Anthropic Messages | `http://127.0.0.1:8080` | `/v1/messages`, `/v1/messages/count_tokens` (tools, vision, thinking) |
+| Ollama | `http://127.0.0.1:8080` | `/api/chat`, `/api/generate`, `/api/tags`, `/api/version` |
+| Gemini | `http://127.0.0.1:8080/v1beta` | `models/{m}:generateContent`, `models/{m}:streamGenerateContent` |
+
+## Examples
+
+OpenAI Python SDK:
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="local")
+print(client.chat.completions.create(model="local", messages=[{"role": "user", "content": "Hello"}]).choices[0].message.content)
+```
+
+Anthropic Python SDK (also works for tools built on it):
+```python
+import anthropic
+client = anthropic.Anthropic(base_url="http://127.0.0.1:8080", api_key="local")
+print(client.messages.create(model="local", max_tokens=200, messages=[{"role": "user", "content": "Hello"}]).content[0].text)
+```
+
+Apps that talk to Ollama: set the Ollama host to `http://127.0.0.1:8080`.
+
+Gemini REST:
+```
+curl http://127.0.0.1:8080/v1beta/models/local:generateContent -H "Content-Type: application/json" \
+  -d "{\"contents\":[{\"parts\":[{\"text\":\"Hello\"}]}]}"
+```
+
+## Mixing in your own cloud keys (optional, off by default)
+
+Everything stays on your PC unless you create `~/.localllm/route.json` with `"enabled": true` and put a key in an
+environment variable (or the OS keychain via the `keyring` package). Then a request goes to your cloud provider only when
+a rule says so:
+
+- the app asked for a cloud model by name (`gpt-...`, `claude-...`, `gemini-...`)
+- the prompt is longer than `max_local_prompt_tokens`
+- the local model's **measured** score in the message's language is below `language_floor`
+
+Each response carries an `X-Localllm-Route` header saying where it went and why. `localllm route` shows the config;
+`localllm route --test "your prompt"` sends the same prompt to the local model and to each configured provider and
+prints time, tokens and cost side by side. Prices per million tokens are taken from `price_in` / `price_out` in the
+config when you set them.
+
+```json
+{
+  "enabled": true,
+  "provider": "openrouter",
+  "providers": {
+    "openrouter": {"kind": "openai", "url": "https://openrouter.ai/api", "key_env": "OPENROUTER_API_KEY",
+                   "model": "anthropic/claude-sonnet-4", "price_in": 3.0, "price_out": 15.0},
+    "anthropic":  {"kind": "anthropic", "url": "https://api.anthropic.com", "key_env": "ANTHROPIC_API_KEY",
+                   "model": "claude-sonnet-4-5"}
+  },
+  "rules": {"max_local_prompt_tokens": 6000, "language_floor": 60, "cloud_model_names": true},
+  "local_model": "qwen3.8-27b-q3"
+}
+```

@@ -13,11 +13,14 @@ def test_server_args_mtp_and_device():
     assert "draft-mtp" not in runtime.server_args(runtime.Path("m.gguf"), None, 8080, 4096, mtp=False)
 
 
-def test_env_disables_host_visible_vidmem_unless_set(monkeypatch):
+def test_env_small_bar_fix_per_model_and_tune(monkeypatch):
     monkeypatch.delenv("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM", raising=False)
-    assert runtime.server_env()["GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM"] == "1"
-    monkeypatch.setenv("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM", "0")
-    assert runtime.server_env()["GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM"] == "0"
+    assert runtime.server_env()["GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM"] == "1"            # unknown model: on
+    assert "GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM" not in runtime.server_env(vk_fix=False)  # gemma-4: unset = off
+    assert "GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM" not in runtime.server_env({"env": {}})   # tuned: exactly as measured
+    assert runtime.server_env({"env": {"GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM": "1"}})["GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM"] == "1"
+    monkeypatch.setenv("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM", "1")
+    assert runtime.server_env(vk_fix=False)["GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM"] == "1"  # the user's choice wins
 
 
 def test_best_device_skips_igpu():
@@ -86,8 +89,16 @@ def test_ram_estimate_counts_llama_defaults():
     args = runtime.server_args(runtime.Path(m["file"]), "Vulkan0", 8080, 8192, m["mtp"], ram_total_gb=128)
     est = sizing.ram_estimate_gb(m, args)
     assert est["prompt_cache_gb"] == 8.0
-    assert est["checkpoints_gb"] == round(32 * 8192 * m["kv_kb_per_token"] / 2**20, 1)
+    assert est["checkpoints_gb"] == round(32 * m["checkpoint_gb"], 1)   # hybrid/SWA: state per checkpoint
     assert est["total_gb"] > 8.0  # no longer under-reports the big RAM users
+
+
+def test_ram_estimate_matches_measured_low_ram_profile():
+    # measured on RX 9070 XT / 32 GB, 30-turn chat: Qwen3.8 working set 2.37 GB with --cache-ram 1024 --ctx-checkpoints 4
+    from localllm import catalog, runtime, sizing
+    m = catalog.MODELS["qwen3.8-27b-q3"]
+    est = sizing.ram_estimate_gb(m, runtime.server_args(runtime.Path("m"), None, 8080, 8192, True, ram_total_gb=31.8))
+    assert abs(est["total_gb"] - 2.37) < 0.5
 
 
 def test_ram_available_gb_is_positive():
@@ -149,3 +160,6 @@ def test_moe_offload_on_a_12gb_card():
 def test_quality_floor_and_qat():
     assert catalog.below_floor("qwen3.8-27b-iq2") and not catalog.below_floor("qwen3.8-27b-q3")
     assert not catalog.below_floor("gemma4-26b-a4b-qat")
+
+    assert a[a.index("--n-cpu-moe") + 1] == str(n) and a[a.index("--load-mode") + 1] == "none"
+    assert catalog.speed("gemma4-26b-a4b-qat", 12.0, 20) == 45                  # measured, not the placeholder

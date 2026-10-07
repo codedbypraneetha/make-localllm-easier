@@ -125,15 +125,16 @@ def server_args(model: Path, device: str | None, port: int, ctx: int, mtp: bool,
                 ram_total_gb: float | None = None, cpu_moe: int = 0) -> list[str]:
     args = ["-m", str(model), "--host", "127.0.0.1", "--port", str(port), "-c", str(ctx), "-ngl", "999",
             "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "-kvu", "-fit", "off"]
-    # whole model on the GPU: read weights straight into VRAM; experts left in RAM: mmap so the OS can share/reclaim them
-    args += ["--n-cpu-moe", str(cpu_moe)] if cpu_moe else ["--load-mode", "none"]
+    # read weights straight into place. Measured on gemma-4 with 13 layers' experts in RAM: same 36 tok/s as mmap but
+    # 6.1 GB working set instead of 13.5 GB (mmap keeps the whole file resident)
+    args += ["--load-mode", "none"] + (["--n-cpu-moe", str(cpu_moe)] if cpu_moe else [])
     prof = ram_profile(ram_total_gb if ram_total_gb is not None else ram_gb())
     if prof:
         args += ["--cache-ram", str(prof[0]), "--ctx-checkpoints", str(prof[1])]
     if device:
         args += ["-dev", device]
     if mtp:
-        args += ["--spec-type", "draft-mtp", "--spec-draft-n-max", "2"]
+        args += ["--spec-type", "draft-mtp", "--spec-draft-n-max", str(mtp if mtp is not True and mtp > 1 else 2)]
     return args
 
 
@@ -154,8 +155,19 @@ def gpu_spill_gb(pid: int) -> float | None:
         return None
 
 
-SPILL_WARN_GB = 0.5
+SPILL_WARN_GB = 1.5   # Vulkan keeps ~0.5-0.9 GB of host-visible buffers here even when the model fits (measured)
 
 
-def server_env() -> dict:
-    return {**os.environ, "GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM": os.environ.get("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM", "1")}
+def server_env(tuned: dict | None = None, vk_fix: bool = True) -> dict:
+    """Environment for llama-server. With a `localllm tune` result: exactly the settings that measured faster on this
+    PC. Without one: the small-BAR fix when the catalog says it helps this model (measured on RX 9070 XT: Qwen3.8 1.64x
+    faster, gemma-4 7-9% slower). llama.cpp treats any value of the variable as "on", so "off" means unset."""
+    env = {**os.environ}
+    if tuned is not None:
+        env.pop("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM", None)
+        return {**env, **tuned.get("env", {})}
+    if "GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM" in os.environ:   # the user decided
+        return env
+    if vk_fix:
+        env["GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM"] = "1"
+    return env

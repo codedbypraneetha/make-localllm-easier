@@ -102,7 +102,8 @@ def ram_estimate_gb(model: dict, server_args: list[str]) -> dict:
     The weights themselves live in VRAM. RAM holds the CPU-mapped embeddings/output tensor
     (per-model `cpu_mapped_gb` from the catalog when measured, else ~2% of the weights), the
     llama-server host prompt cache (`--cache-ram`, default 8192 MiB) and the per-slot context
-    checkpoints (`--ctx-checkpoints`, default 32), each about one full q8 KV cache, plus the
+    checkpoints (`--ctx-checkpoints`, default 32) - for hybrid/sliding-window models only the recurrent/SWA state
+    (catalog `checkpoint_gb`, measured), otherwise about one full q8 KV cache - plus the
     server process and host-side compute buffers. The running KV cache counts against VRAM,
     not RAM, so it isn't included here.
     """
@@ -111,7 +112,8 @@ def ram_estimate_gb(model: dict, server_args: list[str]) -> dict:
     slots = int(_flag(server_args, "-np", "--parallel") or 1)
     checkpoints = int(_flag(server_args, "--ctx-checkpoints") or LLAMA_DEFAULT_CTX_CHECKPOINTS)
     ctx = int(_flag(server_args, "-c", "--ctx-size") or 8192)
-    ckpt_gb = slots * checkpoints * ctx * model.get("kv_kb_per_token", 0) / 2**20
+    per_ckpt = model.get("checkpoint_gb", ctx * model.get("kv_kb_per_token", 0) / 2**20)
+    ckpt_gb = slots * checkpoints * per_ckpt
     total = embed + RAM_HOST_GB + cache_ram_gb + ckpt_gb
     return {"embed_gb": round(embed, 1), "host_gb": round(RAM_HOST_GB, 1),
             "prompt_cache_gb": round(cache_ram_gb, 1), "checkpoints_gb": round(ckpt_gb, 1),

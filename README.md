@@ -18,7 +18,8 @@ You also get an OpenAI-compatible API at `http://127.0.0.1:8080/v1` for any app 
 localllm chat       # chat right here in the terminal (Thai, Japanese, any language)
 localllm doctor     # what this GPU is good for: model sizes, speed, how much text it can hold
 localllm list       # every model we have measured, with scores per language
-localllm serve      # API only, no browser
+localllm serve      # API only (OpenAI, Anthropic, Ollama and Gemini formats), no browser
+localllm route      # optional: mix in your own cloud key, compare local vs cloud
 localllm eval       # score any running server in English + your language
 ```
 
@@ -29,7 +30,7 @@ localllm eval       # score any running server in English + your language
 how much system RAM that model uses (est.).
 
 **Can a 16 GB GPU run a 27B model?** Yes. Qwen3.8-27B at ~3.5 bits (12.2 GB) runs at ~50 tok/s on an RX 9070 XT and
-keeps 81.8% on English Global-MMLU-Lite. gemma-4-26B-A4B (13.3 GB) runs at ~69 tok/s with similar accuracy.
+keeps 81.8% on English Global-MMLU-Lite. gemma-4-26B-A4B (13.3 GB) runs at ~85 tok/s with similar accuracy.
 
 **Is a 2-bit quantized model good enough?** Usually not for non-English use: 2-bit costs 8-13 accuracy points, and
 Hindi, Arabic and Thai lose the most (13 points).
@@ -40,6 +41,17 @@ buffers in a 256 MB host-visible heap backed by system RAM and decode drops up t
 
 **Can I chat with a local LLM in the terminal?** Yes: `localllm chat`. Answers stream as they're written, the
 conversation is remembered, `/save` writes it to a file, `/think` shows the model's reasoning, Ctrl+C stops an answer.
+
+**Can I use it as an Ollama, OpenAI, Anthropic or Gemini replacement?** Yes. One local endpoint at
+`http://127.0.0.1:8080` speaks all four APIs, so existing apps and SDKs only need a new base URL. See
+[docs/apis.md](docs/apis.md).
+
+**Can it fall back to my cloud API key?** Only if you turn it on. Routing is off by default; with your own key in an
+environment variable it sends a request to the cloud only when a rule says so (prompt too long, a cloud model asked for
+by name, or the local model scores below your floor in that language) and tells you where each answer came from.
+
+**How much RAM does a local LLM need?** With the model fully on the GPU, about 2-2.5 GB of system RAM with `localllm`
+(vs ~9 GB growing with llama-server's defaults). `localllm doctor` prints the estimate for your PC.
 
 **Does it work offline?** After the first download, yes. Nothing leaves your PC.
 
@@ -65,10 +77,23 @@ What it can do here:
   holds ~78k tokens at once (~130 pages of text) next to the model
   uses ~34.7 GB of system RAM: ~0.3 GB embeddings/CPU-mapped + ~8.0 GB prompt cache + ~25.9 GB ctx checkpoints + ~0.5 GB host (est.)
   leaves ~0 GB of RAM free for other apps (est.)
-  answers at ~69 tok/s
+  answers at ~85 tok/s
 ```
 
 Speeds marked *est.* come from your card's memory bandwidth, calibrated on measured runs. Everything else is measured.
+
+## Less RAM than running llama.cpp yourself (0.2)
+
+llama-server's defaults keep a prompt cache of up to 8 GiB plus 32 conversation checkpoints in system RAM, so RAM keeps
+growing while you chat. `localllm` sizes both to your PC. Same 30-turn chat, RX 9070 XT, 32 GB RAM:
+
+| model | llama.cpp defaults | `localllm` | speed |
+|---|---|---|---|
+| Qwen3.8-27B Q3 | 9.30 GB RAM | **2.37 GB** | 35.2 tok/s both |
+| gemma-4-26B-A4B QAT | 9.24 GB RAM | **2.21 GB** | ~85 tok/s both |
+
+About **4x less RAM, same speed, ~15% less CPU per answer, ~0% CPU while idle.** On cards too small for gemma-4, its
+experts can stay in RAM: 45 / 36 / 31 tok/s with 8 / 13 / 18 layers' experts off the GPU (12 / 10 / 8 GB cards).
 
 ## Measured results (RX 9070 XT 16 GB, Windows 11, llama.cpp Vulkan)
 
@@ -84,7 +109,7 @@ languages compare like for like. **regional** = INCLUDE: real exams written in e
 | Arabic | 70.8 / 71.2 | 71.5 / 73.6 | 60.8 / 57.2 |
 | Hindi | 69.0 / 74.3 | 69.5 / 71.0 | 56.2 / 55.5 |
 | Thai | – / 67.1 | – / 65.7 | – / 54.2 |
-| **decode speed** | **50 tok/s** (MTP) | **69 tok/s** | 40 tok/s |
+| **decode speed** | **50 tok/s** (MTP) | **85 tok/s** | 40 tok/s |
 
 Cells are global / regional. Margins are about ±4 (global) and ±5 (regional) points at 95%, so `localllm` treats gaps
 under 2 points as a tie and picks the faster model.
@@ -93,11 +118,15 @@ under 2 points as a tie and picks the faster model.
 
 1. **2-bit costs 8-13 points, and lower-resource languages pay the most.** Hindi, Arabic and Thai lose 13; English,
    Chinese and Spanish about 8-9. A 177B MoE squeezed to 1.6 bits scored *below* a 27B at 3 bits.
-2. **Calibrating the quantization on your language doesn't help at ~3.5 bits.** A Thai-text importance matrix scored the
-   same as the stock one in Thai, English and Chinese (64.8 vs 64.6 Thai). At this level the number of bits matters,
-   the calibration text doesn't.
-3. **AMD/Intel cards without Resizable BAR lose up to 1.7x decode speed** in llama.cpp's Vulkan backend. Hybrid DeltaNet
-   models (Qwen3.5/3.8) suffer most: they rewrite a 3 MB state per layer per token.
+2. **Calibrating the quantization on your languages helps at 2-bit, not at ~3.5 bits.** Same 2-bit recipe, only the
+   importance matrix changed: stock 45.0 Thai, Thai-text 51.7, a mixed chat-format set (English, Thai, Hindi, Arabic,
+   code, math) 51.0 Thai with the best average across Thai/Hindi/Arabic/English (61.2 vs 58.7). At ~3.5 bits a Thai
+   matrix scored the same as the stock one (64.8 vs 64.6). Details in [#24](https://github.com/phonology024/make-localllm-easier/issues/24).
+3. **AMD/Intel cards without Resizable BAR: the Vulkan fix is model-dependent - so measure.**
+   `GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM=1` makes Qwen3.8-27B (hybrid DeltaNet, rewrites a 3 MB state per layer per token)
+   1.64x faster on an RX 9070 XT with ReBAR off, but gemma-4-26B-A4B 7-9% *slower*. `localllm` applies it per model,
+   and `localllm tune` measures it on your PC. Note: llama.cpp treats any value, even `0`, as on - unset it to turn it
+   off. See [llama.cpp#27097](https://github.com/ggml-org/llama.cpp/issues/27097).
 4. **Qwen3.8 GGUFs ship a multi-token-prediction head.** Drafting 2 tokens with it adds ~40% decode speed for free;
    drafting 3 is slower.
 5. **The first run of a new llama.cpp build is slow** while the GPU driver compiles its shaders once (~15 s).

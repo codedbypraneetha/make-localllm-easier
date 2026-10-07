@@ -10,7 +10,7 @@
 
 ## Key measured facts (RX 9070 XT 16 GB, Windows, llama.cpp Vulkan)
 - Qwen3.8-27B UD-Q3_K_XL (12.2 GB): English 81.8%, ~50 tok/s with MTP drafting
-- gemma-4-26B-A4B QAT Q4 (13.3 GB): English 82.2%, ~69 tok/s
+- gemma-4-26B-A4B QAT Q4 (13.3 GB): English 82.2%, ~85 tok/s
 - 2-bit quantization costs 8-13 points; Hindi, Arabic, Thai lose most (13)
 - Language-specific imatrix calibration gives no gain at ~3.5 bits
 - AMD/Intel without Resizable BAR: set GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM=1 for up to 1.7x decode (llama.cpp#27097)
