@@ -76,6 +76,22 @@ result at 3.5 bpw. Below ~3 bits the weights are effectively restructured, so ca
       most useful on 1-4B models
 - [ ] Publish every measured quant with its per-language scores on Hugging Face
 
+## 0.6 - smart router: the right local model for each message (Laya-style)
+Idea from the maintainer's Laya router (Local Router Chat): a small, fast classifier reads each message and sends it to
+the model that is best *for that request* - fast MoE for everyday chat, the stronger dense model for Chinese/Japanese or
+hard reasoning, the user's cloud key only when nothing local is good enough. Unlike generic routers, ours decides from
+**measured per-language/per-task scores** in the catalog. Prior evidence: a few-shot LLM router picked correctly on 47/48
+Thai/Thai-English requests vs 20/48 for rules, but took ~2.3 s per message; RouteLLM keeps 95% of GPT-4 quality with 26%
+strong-model calls.
+
+- [ ] Router latency budget < 50 ms: embedding/semantic router or a <=1B classifier on CPU, never the 27B model
+- [ ] Two models resident at once (depends on 0.5 compression: e.g. a fast and a strong model that both fit in 16 GB),
+      so routing never waits for a 5-6 s model swap; fall back to "stay on the current model" when a swap would be needed
+- [ ] Routing table generated from catalog scores per language/task + measured tok/s, overridable per app
+- [ ] Benchmark: answer quality and end-to-end latency vs a single model, on the multilingual suite + a routing test set
+      (Thai/Thai-English set from the Laya research, extended to other languages); ship only if both improve
+- [ ] Show which model answered and why, with a one-key override in `localllm chat`
+
 ## Later
 - Shared prefix cache (block/radix, like vLLM/SGLang) instead of per-slot prompt copies - needs llama.cpp work
 - More measured GPUs: `localllm eval` results from contributors feed the catalog
