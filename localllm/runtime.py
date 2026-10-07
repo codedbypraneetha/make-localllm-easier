@@ -133,7 +133,7 @@ def server_args(model: Path, device: str | None, port: int, ctx: int, mtp: bool,
     if device:
         args += ["-dev", device]
     if mtp:
-        args += ["--spec-type", "draft-mtp", "--spec-draft-n-max", "2"]
+        args += ["--spec-type", "draft-mtp", "--spec-draft-n-max", str(mtp if mtp is not True and mtp > 1 else 2)]
     return args
 
 
@@ -157,5 +157,9 @@ def gpu_spill_gb(pid: int) -> float | None:
 SPILL_WARN_GB = 0.5
 
 
-def server_env() -> dict:
+def server_env(tuned: dict | None = None) -> dict:
+    """Environment for llama-server. With a `localllm tune` result, exactly the settings that measured faster on this
+    PC; without one, the small-BAR fix (harmless when Resizable BAR is on)."""
+    if tuned is not None:
+        return {**os.environ, **tuned.get("env", {})}
     return {**os.environ, "GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM": os.environ.get("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM", "1")}

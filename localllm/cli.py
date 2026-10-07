@@ -3,6 +3,7 @@
   localllm                  check this PC, pick the best model, download, start, open the chat page
   localllm doctor           what GPU/RAM you have and which model fits
   localllm list             every model we have measured
+  localllm tune             measure the fastest llama.cpp settings for this PC once (kept only if >= 1.1x faster)
   localllm chat             chat in this terminal (starts the model if it isn't running)
   localllm serve [MODEL]    start an OpenAI-compatible server only (http://127.0.0.1:8080/v1)
   localllm eval             score a running server in English + your language (global and local exams)
@@ -73,10 +74,13 @@ def _start(key: str | None, port: int, ctx: int) -> tuple[subprocess.Popen, str]
     if cpu_moe:
         _say(f"{key} doesn't fit the GPU whole: keeping the experts of {cpu_moe} layers in system RAM")
     model = _model_path(key)
-    args = runtime.server_args(model, dev["id"] if dev else None, port, ctx, catalog.MODELS[key]["mtp"], cpu_moe=cpu_moe)
+    from . import tune
+    tuned = tune.load().get(tune.machine_key(dev["name"] if dev else "cpu", model.name, server))
+    mtp = (tuned["mtp"] if tuned else catalog.MODELS[key]["mtp"]) if catalog.MODELS[key]["mtp"] else False
+    args = runtime.server_args(model, dev["id"] if dev else None, port, ctx, mtp, cpu_moe=cpu_moe)
     runtime.HOME.mkdir(parents=True, exist_ok=True)
     log = open(runtime.HOME / "llama-server.log", "ab")
-    proc = subprocess.Popen([str(server), *args], env=runtime.server_env(), stdout=log, stderr=subprocess.STDOUT)
+    proc = subprocess.Popen([str(server), *args], env=runtime.server_env(tuned), stdout=log, stderr=subprocess.STDOUT)
     _say(f"loading {key} on {dev['name'] if dev else 'CPU'} ...")
     url = f"http://127.0.0.1:{port}"
     for _ in range(1000):
@@ -120,6 +124,24 @@ def cmd_chat(a) -> None:
         chat.repl(url, a.model or "")
     finally:
         proc.terminate()
+
+
+def cmd_tune(a) -> None:
+    from . import tune
+    from .bench import system_language
+    server, _devs, dev, _ram = _machine()
+    if not dev:
+        sys.exit("[localllm] no GPU found to tune")
+    ram_free = runtime.ram_available_gb()
+    key = a.model or catalog.pick(dev["total_gb"], system_language(), ram_free)
+    model = _model_path(key)
+    cpu_moe = catalog.cpu_moe_layers(key, dev["total_gb"], ram_free) or 0
+    base = [a for a in runtime.server_args(model, dev["id"], 0, 4096, False, cpu_moe=cpu_moe) if True]
+    i = base.index("--port"); del base[i:i + 2]
+    _say(f"tuning {key} on {dev['name']} (a few minutes; each setting is kept only if it is >= 1.1x faster) ...")
+    chosen = tune.run(server, model, dev["name"], base, bool(catalog.MODELS[key]["mtp"]), log=lambda s: _say("  " + s))
+    _say(f"kept: env {chosen['env'] or 'none'}, MTP draft {chosen['mtp'] or 'off'} -> {chosen['tok_s']} tok/s "
+         f"(saved to {tune.CACHE})")
 
 
 def cmd_serve(a) -> None:
@@ -214,6 +236,8 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
     sub.add_parser("list").set_defaults(fn=cmd_list)
+    t = sub.add_parser("tune", help="measure the fastest settings for this PC once and remember them")
+    t.add_argument("model", nargs="?", choices=list(catalog.MODELS)); t.set_defaults(fn=cmd_tune)
     c = sub.add_parser("chat"); c.add_argument("model", nargs="?", choices=list(catalog.MODELS))
     c.add_argument("--url", help="chat with an already running OpenAI-compatible server instead")
     c.add_argument("--port", type=int, default=8080); c.add_argument("--ctx", type=int, default=8192)
