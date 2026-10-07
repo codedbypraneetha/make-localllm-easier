@@ -125,8 +125,9 @@ def server_args(model: Path, device: str | None, port: int, ctx: int, mtp: bool,
                 ram_total_gb: float | None = None, cpu_moe: int = 0) -> list[str]:
     args = ["-m", str(model), "--host", "127.0.0.1", "--port", str(port), "-c", str(ctx), "-ngl", "999",
             "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "-kvu", "-fit", "off"]
-    # whole model on the GPU: read weights straight into VRAM; experts left in RAM: mmap so the OS can share/reclaim them
-    args += ["--n-cpu-moe", str(cpu_moe)] if cpu_moe else ["--load-mode", "none"]
+    # read weights straight into place. Measured on gemma-4 with 13 layers' experts in RAM: same 36 tok/s as mmap but
+    # 6.1 GB working set instead of 13.5 GB (mmap keeps the whole file resident)
+    args += ["--load-mode", "none"] + (["--n-cpu-moe", str(cpu_moe)] if cpu_moe else [])
     prof = ram_profile(ram_total_gb if ram_total_gb is not None else ram_gb())
     if prof:
         args += ["--cache-ram", str(prof[0]), "--ctx-checkpoints", str(prof[1])]

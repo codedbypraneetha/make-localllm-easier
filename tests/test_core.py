@@ -86,8 +86,16 @@ def test_ram_estimate_counts_llama_defaults():
     args = runtime.server_args(runtime.Path(m["file"]), "Vulkan0", 8080, 8192, m["mtp"], ram_total_gb=128)
     est = sizing.ram_estimate_gb(m, args)
     assert est["prompt_cache_gb"] == 8.0
-    assert est["checkpoints_gb"] == round(32 * 8192 * m["kv_kb_per_token"] / 2**20, 1)
+    assert est["checkpoints_gb"] == round(32 * m["checkpoint_gb"], 1)   # hybrid/SWA: state per checkpoint
     assert est["total_gb"] > 8.0  # no longer under-reports the big RAM users
+
+
+def test_ram_estimate_matches_measured_low_ram_profile():
+    # measured on RX 9070 XT / 32 GB, 30-turn chat: Qwen3.8 working set 2.37 GB with --cache-ram 1024 --ctx-checkpoints 4
+    from localllm import catalog, runtime, sizing
+    m = catalog.MODELS["qwen3.8-27b-q3"]
+    est = sizing.ram_estimate_gb(m, runtime.server_args(runtime.Path("m"), None, 8080, 8192, True, ram_total_gb=31.8))
+    assert abs(est["total_gb"] - 2.37) < 0.5
 
 
 def test_ram_available_gb_is_positive():
@@ -143,4 +151,5 @@ def test_moe_offload_on_a_12gb_card():
     assert catalog.cpu_moe_layers("gemma4-26b-a4b-qat", 12.0, 1) is None        # not enough RAM
     assert catalog.cpu_moe_layers("qwen3.8-27b-q3", 12.0, 20) is None           # dense: no offload path
     a = runtime.server_args(runtime.Path("m"), None, 8080, 8192, False, ram_total_gb=32, cpu_moe=n)
-    assert a[a.index("--n-cpu-moe") + 1] == str(n) and "--load-mode" not in a   # mmap when experts stay in RAM
+    assert a[a.index("--n-cpu-moe") + 1] == str(n) and a[a.index("--load-mode") + 1] == "none"
+    assert catalog.speed("gemma4-26b-a4b-qat", 12.0, 20) == 45                  # measured, not the placeholder
