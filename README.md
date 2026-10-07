@@ -122,8 +122,11 @@ under 2 points as a tie and picks the faster model.
    importance matrix changed: stock 45.0 Thai, Thai-text 51.7, a mixed chat-format set (English, Thai, Hindi, Arabic,
    code, math) 51.0 Thai with the best average across Thai/Hindi/Arabic/English (61.2 vs 58.7). At ~3.5 bits a Thai
    matrix scored the same as the stock one (64.8 vs 64.6). Details in [#24](https://github.com/phonology024/make-localllm-easier/issues/24).
-3. **AMD/Intel cards without Resizable BAR lose up to 1.7x decode speed** in llama.cpp's Vulkan backend. Hybrid DeltaNet
-   models (Qwen3.5/3.8) suffer most: they rewrite a 3 MB state per layer per token.
+3. **AMD/Intel cards without Resizable BAR: the Vulkan fix is model-dependent - so measure.**
+   `GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM=1` makes Qwen3.8-27B (hybrid DeltaNet, rewrites a 3 MB state per layer per token)
+   1.64x faster on an RX 9070 XT with ReBAR off, but gemma-4-26B-A4B 7-9% *slower*. `localllm` applies it per model,
+   and `localllm tune` measures it on your PC. Note: llama.cpp treats any value, even `0`, as on - unset it to turn it
+   off. See [llama.cpp#27097](https://github.com/ggml-org/llama.cpp/issues/27097).
 4. **Qwen3.8 GGUFs ship a multi-token-prediction head.** Drafting 2 tokens with it adds ~40% decode speed for free;
    drafting 3 is slower.
 5. **The first run of a new llama.cpp build is slow** while the GPU driver compiles its shaders once (~15 s).

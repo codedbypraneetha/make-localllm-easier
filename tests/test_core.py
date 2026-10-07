@@ -13,11 +13,14 @@ def test_server_args_mtp_and_device():
     assert "draft-mtp" not in runtime.server_args(runtime.Path("m.gguf"), None, 8080, 4096, mtp=False)
 
 
-def test_env_disables_host_visible_vidmem_unless_set(monkeypatch):
+def test_env_small_bar_fix_per_model_and_tune(monkeypatch):
     monkeypatch.delenv("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM", raising=False)
-    assert runtime.server_env()["GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM"] == "1"
-    monkeypatch.setenv("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM", "0")
-    assert runtime.server_env()["GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM"] == "0"
+    assert runtime.server_env()["GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM"] == "1"            # unknown model: on
+    assert "GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM" not in runtime.server_env(vk_fix=False)  # gemma-4: unset = off
+    assert "GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM" not in runtime.server_env({"env": {}})   # tuned: exactly as measured
+    assert runtime.server_env({"env": {"GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM": "1"}})["GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM"] == "1"
+    monkeypatch.setenv("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM", "1")
+    assert runtime.server_env(vk_fix=False)["GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM"] == "1"  # the user's choice wins
 
 
 def test_best_device_skips_igpu():

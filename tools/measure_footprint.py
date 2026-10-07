@@ -58,13 +58,18 @@ def main() -> None:
     ap.add_argument("--turns", type=int, default=30); ap.add_argument("--ctx", type=int, default=8192)
     ap.add_argument("--server", default=str(runtime.find_server()))
     ap.add_argument("--raw", action="store_true", help="llama.cpp defaults for caches (no localllm profile)")
+    ap.add_argument("--no-vk-fix", action="store_true", help="run without GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM "
+                    "(llama.cpp treats any value, even 0, as on - so it must be unset)")
     ap.add_argument("extra", nargs="*")
     a = ap.parse_args()
     port = 18123
     args = runtime.server_args(Path(a.model), "Vulkan0", port, a.ctx, False, ram_total_gb=1e9 if a.raw else None)
     args += a.extra
     log = open(Path(__file__).with_name("footprint_server.log"), "ab")
-    proc = subprocess.Popen([a.server, *args], env=runtime.server_env(), stdout=log, stderr=subprocess.STDOUT)
+    env = runtime.server_env()
+    if a.no_vk_fix:
+        env.pop("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM", None)
+    proc = subprocess.Popen([a.server, *args], env=env, stdout=log, stderr=subprocess.STDOUT)
     url = f"http://127.0.0.1:{port}"
     for _ in range(600):
         try:

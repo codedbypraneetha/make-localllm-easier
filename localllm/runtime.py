@@ -158,9 +158,16 @@ def gpu_spill_gb(pid: int) -> float | None:
 SPILL_WARN_GB = 1.5   # Vulkan keeps ~0.5-0.9 GB of host-visible buffers here even when the model fits (measured)
 
 
-def server_env(tuned: dict | None = None) -> dict:
-    """Environment for llama-server. With a `localllm tune` result, exactly the settings that measured faster on this
-    PC; without one, the small-BAR fix (harmless when Resizable BAR is on)."""
+def server_env(tuned: dict | None = None, vk_fix: bool = True) -> dict:
+    """Environment for llama-server. With a `localllm tune` result: exactly the settings that measured faster on this
+    PC. Without one: the small-BAR fix when the catalog says it helps this model (measured on RX 9070 XT: Qwen3.8 1.64x
+    faster, gemma-4 7-9% slower). llama.cpp treats any value of the variable as "on", so "off" means unset."""
+    env = {**os.environ}
     if tuned is not None:
-        return {**os.environ, **tuned.get("env", {})}
-    return {**os.environ, "GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM": os.environ.get("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM", "1")}
+        env.pop("GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM", None)
+        return {**env, **tuned.get("env", {})}
+    if "GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM" in os.environ:   # the user decided
+        return env
+    if vk_fix:
+        env["GGML_VK_DISABLE_HOST_VISIBLE_VIDMEM"] = "1"
+    return env

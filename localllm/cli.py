@@ -89,7 +89,7 @@ def _start(key: str | None, port: int, ctx: int) -> tuple[subprocess.Popen, str]
     args = runtime.server_args(model, dev["id"] if dev else None, inner, ctx, mtp, cpu_moe=cpu_moe)
     runtime.HOME.mkdir(parents=True, exist_ok=True)
     log = open(runtime.HOME / "llama-server.log", "ab")
-    proc = subprocess.Popen([str(server), *args], env=runtime.server_env(tuned), stdout=log, stderr=subprocess.STDOUT)
+    proc = subprocess.Popen([str(server), *args], env=runtime.server_env(tuned, catalog.MODELS[key].get("vk_fix", True)), stdout=log, stderr=subprocess.STDOUT)
     _say(f"loading {key} on {dev['name'] if dev else 'CPU'} ...")
     url = f"http://127.0.0.1:{inner}"
     for _ in range(1000):
@@ -241,8 +241,14 @@ def cmd_doctor(_a) -> None:
     print(f"  leaves ~{ram_free:.0f} GB of RAM free for other apps (est.)")
     same = bw == sizing.BANDWIDTH["rx 9070 xt"]
     est = m["tok_s_9070xt"] if same else (int(m["tok_s_9070xt"] * bw / 640) if bw else None)
-    if est and not cpu_moe:
-        print(f"  answers at ~{est} tok/s" + ("" if same else " (estimated from memory bandwidth)"))
+    from . import tune
+    tuned = tune.load().get(tune.machine_key(gpu, m["file"], server))
+    if tuned:
+        print(f"  answers at ~{tuned['tok_s']:.0f} tok/s (measured here by `localllm tune`)")
+    else:
+        if est and not cpu_moe:
+            print(f"  answers at ~{est} tok/s" + ("" if same else " (estimated from memory bandwidth)"))
+        print("  speed settings not tuned for this PC yet: `localllm tune` measures them once (a few minutes)")
     print(f"\nRun it: localllm        (llama.cpp: {server})")
 
 
