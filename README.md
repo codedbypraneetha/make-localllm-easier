@@ -29,7 +29,7 @@ localllm eval       # score any running server in English + your language
 how much system RAM that model uses (est.).
 
 **Can a 16 GB GPU run a 27B model?** Yes. Qwen3.8-27B at ~3.5 bits (12.2 GB) runs at ~50 tok/s on an RX 9070 XT and
-keeps 81.8% on English Global-MMLU-Lite. gemma-4-26B-A4B (13.3 GB) runs at ~69 tok/s with similar accuracy.
+keeps 81.8% on English Global-MMLU-Lite. gemma-4-26B-A4B (13.3 GB) runs at ~85 tok/s with similar accuracy.
 
 **Is a 2-bit quantized model good enough?** Usually not for non-English use: 2-bit costs 8-13 accuracy points, and
 Hindi, Arabic and Thai lose the most (13 points).
@@ -68,7 +68,7 @@ What it can do here:
   holds ~78k tokens at once (~130 pages of text) next to the model
   uses ~34.7 GB of system RAM: ~0.3 GB embeddings/CPU-mapped + ~8.0 GB prompt cache + ~25.9 GB ctx checkpoints + ~0.5 GB host (est.)
   leaves ~0 GB of RAM free for other apps (est.)
-  answers at ~69 tok/s
+  answers at ~85 tok/s
 ```
 
 Speeds marked *est.* come from your card's memory bandwidth, calibrated on measured runs. Everything else is measured.
@@ -100,7 +100,7 @@ languages compare like for like. **regional** = INCLUDE: real exams written in e
 | Arabic | 70.8 / 71.2 | 71.5 / 73.6 | 60.8 / 57.2 |
 | Hindi | 69.0 / 74.3 | 69.5 / 71.0 | 56.2 / 55.5 |
 | Thai | – / 67.1 | – / 65.7 | – / 54.2 |
-| **decode speed** | **50 tok/s** (MTP) | **69 tok/s** | 40 tok/s |
+| **decode speed** | **50 tok/s** (MTP) | **85 tok/s** | 40 tok/s |
 
 Cells are global / regional. Margins are about ±4 (global) and ±5 (regional) points at 95%, so `localllm` treats gaps
 under 2 points as a tie and picks the faster model.
