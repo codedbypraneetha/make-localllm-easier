@@ -107,14 +107,52 @@ def ram_available_gb() -> float:
     return ram_gb()
 
 
-def server_args(model: Path, device: str | None, port: int, ctx: int, mtp: bool) -> list[str]:
+# Host-RAM caches llama-server keeps by default (8 GiB prompt cache + 32 checkpoints per slot) can grow to many GB
+# (llama.cpp #21690: 0.7 -> 18 GB). One user doesn't need that much: size them from the installed RAM.
+#   installed RAM (GB) -> (--cache-ram MiB, --ctx-checkpoints)
+LOW_RAM_PROFILE = [(16, (512, 2)), (32, (1024, 4)), (64, (2048, 8))]
+
+
+def ram_profile(ram_total_gb: float) -> tuple[int, int] | None:
+    """(cache-ram MiB, ctx-checkpoints) for this PC, or None to keep llama.cpp's defaults on big-RAM machines."""
+    for limit, prof in LOW_RAM_PROFILE:
+        if ram_total_gb <= limit + 0.5:
+            return prof
+    return None
+
+
+def server_args(model: Path, device: str | None, port: int, ctx: int, mtp: bool,
+                ram_total_gb: float | None = None) -> list[str]:
     args = ["-m", str(model), "--host", "127.0.0.1", "--port", str(port), "-c", str(ctx), "-ngl", "999",
             "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "-np", "1", "-kvu", "-fit", "off", "--load-mode", "none"]
+    prof = ram_profile(ram_total_gb if ram_total_gb is not None else ram_gb())
+    if prof:
+        args += ["--cache-ram", str(prof[0]), "--ctx-checkpoints", str(prof[1])]
     if device:
         args += ["-dev", device]
     if mtp:
         args += ["--spec-type", "draft-mtp", "--spec-draft-n-max", "2"]
     return args
+
+
+def gpu_spill_gb(pid: int) -> float | None:
+    """Windows only: GB of this process's GPU allocations that live in *shared* (system) memory.
+
+    When a model doesn't really fit, WDDM quietly backs part of it with system RAM and decode slows down several
+    times; the "GPU Process Memory\\Shared Usage" counter shows it. None when the counter isn't available.
+    """
+    if os.name != "nt":
+        return None
+    ps = (f"(Get-Counter '\\GPU Process Memory(pid_{pid}_*)\\Shared Usage' -ErrorAction SilentlyContinue)"
+          ".CounterSamples | Measure-Object CookedValue -Sum | ForEach-Object Sum")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=20)
+        return float(out.stdout.strip() or 0) / 2**30
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+SPILL_WARN_GB = 0.5
 
 
 def server_env() -> dict:

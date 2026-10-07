@@ -77,13 +77,13 @@ def test_ram_estimate_reads_server_args():
 
 
 def test_ram_estimate_counts_llama_defaults():
-    # localllm doesn't pass --cache-ram/--ctx-checkpoints itself, so llama.cpp
-    # defaults (8192 MiB cache, 32 checkpoints/slot) are what blow RAM up in practice
+    # on big-RAM PCs localllm keeps llama.cpp's own defaults (8192 MiB cache, 32 checkpoints/slot);
+    # the estimate must count them rather than under-report
     from localllm import catalog, runtime, sizing
     from localllm.bench import system_language
     key = catalog.pick(15.9, system_language())
     m = catalog.MODELS[key]
-    args = runtime.server_args(runtime.Path(m["file"]), "Vulkan0", 8080, 8192, m["mtp"])
+    args = runtime.server_args(runtime.Path(m["file"]), "Vulkan0", 8080, 8192, m["mtp"], ram_total_gb=128)
     est = sizing.ram_estimate_gb(m, args)
     assert est["prompt_cache_gb"] == 8.0
     assert est["checkpoints_gb"] == round(32 * 8192 * m["kv_kb_per_token"] / 2**20, 1)
@@ -111,3 +111,26 @@ def test_doctor_shows_ram_line(monkeypatch, capsys):
             f"embeddings/CPU-mapped + ~{est['prompt_cache_gb']:.1f} GB prompt cache + "
             f"~{est['checkpoints_gb']:.1f} GB ctx checkpoints + ~{est['host_gb']:.1f} GB host (est.)") in out
     assert f"leaves ~{max(0.0, 28.0 - est['total_gb']):.0f} GB of RAM free for other apps (est.)" in out
+
+
+def test_low_ram_profile_sized_from_installed_ram():
+    assert runtime.ram_profile(16) == (512, 2)
+    assert runtime.ram_profile(31.8) == (1024, 4)
+    assert runtime.ram_profile(64) == (2048, 8)
+    assert runtime.ram_profile(128) is None
+    a = runtime.server_args(runtime.Path("m.gguf"), None, 8080, 8192, mtp=False, ram_total_gb=31.8)
+    assert a[a.index("--cache-ram") + 1] == "1024" and a[a.index("--ctx-checkpoints") + 1] == "4"
+    assert "--cache-ram" not in runtime.server_args(runtime.Path("m.gguf"), None, 8080, 8192, mtp=False, ram_total_gb=128)
+
+
+def test_ram_estimate_drops_with_low_ram_profile():
+    from localllm import catalog, sizing
+    m = catalog.MODELS["qwen3.8-27b-q3"]
+    big = sizing.ram_estimate_gb(m, runtime.server_args(runtime.Path("m"), None, 8080, 8192, m["mtp"], ram_total_gb=128))
+    small = sizing.ram_estimate_gb(m, runtime.server_args(runtime.Path("m"), None, 8080, 8192, m["mtp"], ram_total_gb=16))
+    assert small["total_gb"] < big["total_gb"]
+
+
+def test_gpu_spill_probe_is_safe_for_unknown_pid():
+    v = runtime.gpu_spill_gb(999999)
+    assert v is None or v == 0.0

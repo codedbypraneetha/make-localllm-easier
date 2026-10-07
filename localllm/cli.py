@@ -80,6 +80,10 @@ def _start(key: str | None, port: int, ctx: int) -> tuple[subprocess.Popen, str]
             sys.exit(f"[localllm] llama-server stopped (exit {proc.returncode}); log: {runtime.HOME / 'llama-server.log'}")
         try:
             if b'"ok"' in urllib.request.urlopen(url + "/health", timeout=2).read():
+                spill = runtime.gpu_spill_gb(proc.pid)
+                if spill and spill > runtime.SPILL_WARN_GB:
+                    _say(f"warning: {spill:.1f} GB of the model spilled from the GPU into system RAM - answers will be "
+                         "slower. Close other GPU-heavy apps or pick a smaller model (`localllm list`).")
                 return proc, url
         except OSError:
             pass
