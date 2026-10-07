@@ -87,6 +87,11 @@ strong-model calls.
 - [ ] Router latency budget < 50 ms: embedding/semantic router or a <=1B classifier on CPU, never the 27B model
 - [ ] Two models resident at once (depends on 0.5 compression: e.g. a fast and a strong model that both fit in 16 GB),
       so routing never waits for a 5-6 s model swap; fall back to "stay on the current model" when a swap would be needed
+- [ ] Lazy-load mode (like the maintainer's Creative Core) for PCs that can't hold two models: load a specialist on
+      demand, unload when idle. Switch per *task phase*, not per message (hysteresis), keep recently used weights in the
+      OS page cache when RAM allows (swap ~2.7 s upload vs ~4.3-6 s cold on a 12 GB model, measured), prefetch the
+      likely next model into RAM while the current one answers, tell the user "switching to the code model (~4 s)" with a
+      stay-here option. `localllm` picks resident-pair vs lazy-load from the PC's VRAM/RAM. Look at llama-swap first.
 - [ ] Routing table generated from catalog scores per language/task + measured tok/s, overridable per app
 - [ ] Benchmark: answer quality and end-to-end latency vs a single model, on the multilingual suite + a routing test set
       (Thai/Thai-English set from the Laya research, extended to other languages); ship only if both improve
