@@ -155,7 +155,7 @@ def gpu_spill_gb(pid: int) -> float | None:
         return None
 
 
-SPILL_WARN_GB = 0.5
+SPILL_WARN_GB = 1.5   # Vulkan keeps ~0.5-0.9 GB of host-visible buffers here even when the model fits (measured)
 
 
 def server_env() -> dict:

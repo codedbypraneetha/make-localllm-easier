@@ -37,18 +37,19 @@ user from 0.7 GB to 18 GB of RAM and out-of-memory in three generations; with 0-
 - [x] Measure and minimise CPU use: idle and busy llama-server CPU, thread count, busy-waiting (#33)
 - [x] Detect Windows "shared GPU memory" spill (VRAM silently overflowing into RAM) and say so
 
-## 0.3 - work with the cloud providers' APIs
+## 0.3 - work with the cloud providers' APIs (released)
+Result: one endpoint verified with the official OpenAI, Anthropic and Ollama SDKs + Gemini REST (streaming included), routing off by default.
 Evidence: llama-server already serves Anthropic `/v1/messages` (tools, vision, thinking) next to OpenAI
 `/v1/chat/completions`; Ollama >= 0.14 does too; LiteLLM routes/falls back across providers; RouteLLM's router keeps 95%
 of GPT-4 quality while sending only 26% of requests to it.
 
-- [ ] One local endpoint: pass OpenAI and Anthropic APIs straight through to llama-server; thin shims for Ollama
+- [x] One local endpoint: pass OpenAI and Anthropic APIs straight through to llama-server; thin shims for Ollama
       `/api/*` and Gemini `generateContent` (#5)
-- [ ] Hybrid routing, local first: forward to the user's own cloud key when the prompt is too long, needs a tool/model
+- [x] Hybrid routing, local first: forward to the user's own cloud key when the prompt is too long, needs a tool/model
       the PC can't run, or the local model is busy; cost and privacy shown before sending; keys in the OS keychain (#6)
-- [ ] Quality-aware routing: thresholds calibrated from *our measured per-language scores* (e.g. send hard Thai or math
+- [x] Quality-aware routing: thresholds calibrated from *our measured per-language scores* (e.g. send hard Thai or math
       to the cloud when the local quant is below the quality floor) - nobody routes by language today
-- [ ] `localllm route --test`: same prompt local vs cloud - answer, latency, cost (#7)
+- [x] `localllm route --test`: same prompt local vs cloud - answer, latency, cost (#7)
 
 ## 0.4 - squeeze the GPU
 Evidence: ReBAR-off fix 1.7x on RX 9070 XT (ours) and 2.7x on RX 7900 XTX (#27097); MTP +40% on RDNA4 (ours), 1.86x on

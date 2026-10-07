@@ -23,6 +23,8 @@ from . import router
 
 PASSTHROUGH = ("/v1/chat/completions", "/v1/completions", "/v1/models", "/v1/embeddings", "/v1/messages",
                "/v1/messages/count_tokens", "/health", "/props", "/slots")
+HOP_BY_HOP = {"host", "content-length", "connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade",
+              "proxy-authorization", "proxy-connection"}
 GEMINI = re.compile(r"^/v1beta/models/([^/:]+):(generateContent|streamGenerateContent)")
 
 
@@ -143,9 +145,9 @@ def make_handler(upstream: str, model_name: str):
                 route_hdr = d.label
                 if d.provider:
                     target, hdrs, body = d.provider.url_base, d.provider.headers(self.path), d.provider.adapt(body, self.path)
-            req = urllib.request.Request(target.rstrip("/") + self.path, data=body, method=method,
-                                         headers={"Content-Type": self.headers.get("Content-Type", "application/json"),
-                                                  **hdrs})
+            fwd = {k: v for k, v in self.headers.items()
+                   if k.lower() not in HOP_BY_HOP and not (hdrs and k.lower() in ("authorization", "x-api-key"))}
+            req = urllib.request.Request(target.rstrip("/") + self.path, data=body, method=method, headers={**fwd, **hdrs})
             try:
                 r = urllib.request.urlopen(req, timeout=3600)
             except urllib.error.HTTPError as e:

@@ -130,3 +130,15 @@ def test_route_compare_local_and_cloud(monkeypatch):
     up.shutdown(); cloud.shutdown()
     assert [r["target"] for r in rows] == ["local", "c"]
     assert rows[1]["cost_usd"] == (3 * 3.0 + 2 * 15.0) / 1e6 and rows[0]["answer"] == "echo: hi"
+
+
+def test_passthrough_forwards_request_headers(monkeypatch):
+    # llama-server's web UI answers 415 unless the browser's Accept-Encoding reaches it
+    monkeypatch.setattr(router, "load_config", lambda: {"enabled": False})
+    up, uurl = _up(); g, gurl = _gw(uurl)
+    req = urllib.request.Request(gurl + "/v1/chat/completions", data=json.dumps({"messages": [{"role": "user", "content": "x"}]}).encode(),
+                                 headers={"Content-Type": "application/json", "Accept-Encoding": "gzip", "X-Custom": "1"})
+    urllib.request.urlopen(req, timeout=30).read()
+    hdrs = {k.lower(): v for k, v in FakeLlama.seen[-1][1].items()}
+    g.shutdown(); up.shutdown()
+    assert hdrs.get("accept-encoding") == "gzip" and hdrs.get("x-custom") == "1"
