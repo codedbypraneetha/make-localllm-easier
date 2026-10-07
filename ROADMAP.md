@@ -1,5 +1,9 @@
 # Roadmap
 
+**North star: the leanest local AI.** Use the least CPU, system RAM and GPU memory, and the smallest model files that
+keep measured quality - beating other launchers on footprint, not just convenience. Where no published work answers a
+question, we run the experiment ourselves and publish the numbers.
+
 Every release ships a before/after number measured on real hardware (one headline figure + a bar chart, e.g.
 "3x less RAM on the same chat"), so an upgrade is visible at a glance.
 
@@ -87,6 +91,13 @@ strong-model calls.
 - [ ] Router latency budget < 50 ms: embedding/semantic router or a <=1B classifier on CPU, never the 27B model
 - [ ] Two models resident at once (depends on 0.5 compression: e.g. a fast and a strong model that both fit in 16 GB),
       so routing never waits for a 5-6 s model swap; fall back to "stay on the current model" when a swap would be needed
+- [ ] **Sub-second model switching** (research, our own experiments where nothing is published): the measured 2.7 s for a
+      12 GB model is only ~4.5 GB/s, far below PCIe 5.0 x16 and page-cache read speed, so the loader is the bottleneck.
+      Try in order: (1) specialists as LoRA adapters on one shared base, hot-swapped per request (milliseconds; extract
+      LoRAs from same-base fine-tunes via SVD when none exist); (2) keep weights pinned in RAM in GPU-ready form and
+      upload in large multi-threaded transfers (target < 1 s for 12 GB); (3) swap models inside one long-lived
+      llama-server instead of restarting the process; (4) smaller files from 0.5. Measure each, upstream what works.
+- [ ] Measure and minimise CPU use: idle and busy llama-server CPU, thread count, busy-waiting
 - [ ] Lazy-load mode (like the maintainer's Creative Core) for PCs that can't hold two models: load a specialist on
       demand, unload when idle. Switch per *task phase*, not per message (hysteresis), keep recently used weights in the
       OS page cache when RAM allows (swap ~2.7 s upload vs ~4.3-6 s cold on a 12 GB model, measured), prefetch the
