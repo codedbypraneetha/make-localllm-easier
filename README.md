@@ -1,7 +1,9 @@
 # make-localllm-easier — run the best local LLM your GPU can handle, in one command
 
-**The leanest way to run local AI: least CPU, RAM and GPU memory, smallest files, measured quality.** `localllm` picks, downloads and runs the most accurate local AI model for your PC and your language, chosen from real
-benchmark measurements, with llama.cpp tuned for AMD, NVIDIA, Intel and Apple GPUs.**
+**The leanest way to run local AI: least CPU, RAM and GPU memory, smallest files, measured quality.**
+
+`localllm` picks, downloads and runs the most accurate local AI model for your PC and your language, chosen from real
+benchmark measurements, with llama.cpp tuned for AMD, NVIDIA, Intel and Apple GPUs.
 
 ```
 pip install make-localllm-easier
