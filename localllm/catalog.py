@@ -7,6 +7,7 @@ MODELS = {
     "qwen3.8-27b-q3": {
         "repo": "unsloth/Qwen3.8-27B-GGUF", "file": "Qwen3.8-27B-UD-Q3_K_XL.gguf", "gb": 12.2,
         "kv_kb_per_token": 34.8, "fixed_cache_gb": 0.15, "max_ctx": 262144, "tok_s_9070xt": 50, "mtp": True,
+        "cpu_mapped_gb": 0.51,  # measured: ~521 MiB of the 12.2 GiB model stays CPU-mapped (large 248k vocab)
         "scores": {"en/global": 81.5, "zh/global": 76.2, "zh/regional": 74.7, "es/global": 80.2, "es/regional": 76.8, "hi/global": 69.0, "hi/regional": 74.3, "ar/global": 70.8, "ar/regional": 71.2, "ja/global": 73.5, "ja/regional": 87.6, "th/regional": 67.1},
         "note": "dense 27B; built-in MTP head drafts 2 tokens",
     },

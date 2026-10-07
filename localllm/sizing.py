@@ -25,6 +25,15 @@ DESKTOP_GB = 1.0        # what the OS/desktop usually keeps on the card
 OVERHEAD_GB = 0.7       # compute buffers + small fixed caches
 TOKENS_PER_PAGE = 600   # ~450 English words
 
+RAM_EMBED_SHARE = 0.02  # fallback when the catalog has no measured cpu_mapped_gb for a model
+RAM_HOST_GB = 0.5       # llama-server process + host-side compute buffers (est.)
+
+# llama.cpp server defaults for flags localllm doesn't set itself. The estimate reads the
+# actual launch args first, so once a low-RAM profile passes smaller values the same code
+# reports the small number honestly.
+LLAMA_DEFAULT_CACHE_RAM_MIB = 8192  # --cache-ram: host prompt-cache ceiling
+LLAMA_DEFAULT_CTX_CHECKPOINTS = 32  # --ctx-checkpoints per slot
+
 # reference shapes people actually download: (label, total params B, active params B)
 SHAPES = [("4B", 4, 4), ("8B", 8, 8), ("14B", 14, 14), ("24-32B", 27, 27), ("30B MoE (3B active)", 30, 3),
           ("70B", 70, 70), ("120B MoE (10B active)", 120, 10)]
@@ -74,3 +83,36 @@ def context_tokens(vram_gb: float, model: dict) -> int:
     """How many tokens of conversation/document fit next to the weights (KV cache at q8)."""
     free = vram_gb - DESKTOP_GB - OVERHEAD_GB - model["gb"] - model.get("fixed_cache_gb", 0)
     return max(0, min(model.get("max_ctx", 131072), int(free * 2**20 / model["kv_kb_per_token"])))
+
+
+def _flag(args: list[str], *names: str) -> str | None:
+    """Value of the first `--flag value` or `--flag=value` in an arg list, else None."""
+    for i, a in enumerate(args):
+        for n in names:
+            if a == n and i + 1 < len(args):
+                return args[i + 1]
+            if a.startswith(n + "="):
+                return a[len(n) + 1:]
+    return None
+
+
+def ram_estimate_gb(model: dict, server_args: list[str]) -> dict:
+    """Estimate of the chosen model's system-RAM footprint while the server runs (est., not measured).
+
+    The weights themselves live in VRAM. RAM holds the CPU-mapped embeddings/output tensor
+    (per-model `cpu_mapped_gb` from the catalog when measured, else ~2% of the weights), the
+    llama-server host prompt cache (`--cache-ram`, default 8192 MiB) and the per-slot context
+    checkpoints (`--ctx-checkpoints`, default 32), each about one full q8 KV cache, plus the
+    server process and host-side compute buffers. The running KV cache counts against VRAM,
+    not RAM, so it isn't included here.
+    """
+    embed = model.get("cpu_mapped_gb", model["gb"] * RAM_EMBED_SHARE)
+    cache_ram_gb = int(_flag(server_args, "--cache-ram") or LLAMA_DEFAULT_CACHE_RAM_MIB) / 1024
+    slots = int(_flag(server_args, "-np", "--parallel") or 1)
+    checkpoints = int(_flag(server_args, "--ctx-checkpoints") or LLAMA_DEFAULT_CTX_CHECKPOINTS)
+    ctx = int(_flag(server_args, "-c", "--ctx-size") or 8192)
+    ckpt_gb = slots * checkpoints * ctx * model.get("kv_kb_per_token", 0) / 2**20
+    total = embed + RAM_HOST_GB + cache_ram_gb + ckpt_gb
+    return {"embed_gb": round(embed, 1), "host_gb": round(RAM_HOST_GB, 1),
+            "prompt_cache_gb": round(cache_ram_gb, 1), "checkpoints_gb": round(ckpt_gb, 1),
+            "total_gb": round(total, 1)}

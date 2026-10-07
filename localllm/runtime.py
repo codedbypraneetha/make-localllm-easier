@@ -72,20 +72,39 @@ def best_device(devs: list[dict]) -> dict | None:
     return max(pool, key=lambda d: d["total_gb"]) if pool else None
 
 
+def _windows_memory() -> tuple[float, float]:
+    """(total_gb, avail_gb) from GlobalMemoryStatusEx."""
+    import ctypes
+
+    class MS(ctypes.Structure):
+        _fields_ = [("len", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong),
+                    ("avail", ctypes.c_ulonglong), ("a", ctypes.c_ulonglong), ("b", ctypes.c_ulonglong),
+                    ("c", ctypes.c_ulonglong), ("d", ctypes.c_ulonglong), ("e", ctypes.c_ulonglong)]
+    s = MS(); s.len = ctypes.sizeof(MS)
+    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(s))
+    return s.total / 2**30, s.avail / 2**30
+
+
 def ram_gb() -> float:
     if os.name == "nt":
-        import ctypes
-
-        class MS(ctypes.Structure):
-            _fields_ = [("len", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong),
-                        ("avail", ctypes.c_ulonglong), ("a", ctypes.c_ulonglong), ("b", ctypes.c_ulonglong),
-                        ("c", ctypes.c_ulonglong), ("d", ctypes.c_ulonglong), ("e", ctypes.c_ulonglong)]
-        s = MS(); s.len = ctypes.sizeof(MS)
-        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(s))
-        return s.total / 2**30
+        return _windows_memory()[0]
     if Path("/proc/meminfo").exists():
         return int(re.search(r"MemTotal:\s+(\d+)", Path("/proc/meminfo").read_text())[1]) / 2**20
     return int(subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True).stdout) / 2**30
+
+
+def ram_available_gb() -> float:
+    """Best-effort currently-available system RAM in GB; falls back to total RAM when unknown."""
+    try:
+        if os.name == "nt":
+            return _windows_memory()[1]
+        if Path("/proc/meminfo").exists():
+            m = re.search(r"MemAvailable:\s+(\d+)", Path("/proc/meminfo").read_text())
+            if m:
+                return int(m[1]) / 2**20
+    except OSError:
+        pass
+    return ram_gb()
 
 
 def server_args(model: Path, device: str | None, port: int, ctx: int, mtp: bool) -> list[str]:

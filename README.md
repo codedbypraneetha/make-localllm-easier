@@ -25,7 +25,8 @@ localllm eval       # score any running server in English + your language
 ## FAQ
 
 **Which local LLM should I run on my GPU?** Run `localllm doctor`. It lists which model sizes fit your card (4B up to
-120B MoE), at which quantization, how fast they should run, and the most accurate measured model for your language.
+120B MoE), at which quantization, how fast they should run, the most accurate measured model for your language, and
+how much system RAM that model uses (est.).
 
 **Can a 16 GB GPU run a 27B model?** Yes. Qwen3.8-27B at ~3.5 bits (12.2 GB) runs at ~50 tok/s on an RX 9070 XT and
 keeps 81.8% on English Global-MMLU-Lite. gemma-4-26B-A4B (13.3 GB) runs at ~69 tok/s with similar accuracy.
@@ -62,6 +63,8 @@ Best measured model for you: gemma4-26b-a4b-qat  (MoE with ~4B active params: fa
 What it can do here:
   TH  real local school/licence exams   65.7% correct  <- your language
   holds ~78k tokens at once (~130 pages of text) next to the model
+  uses ~34.7 GB of system RAM: ~0.3 GB embeddings/CPU-mapped + ~8.0 GB prompt cache + ~25.9 GB ctx checkpoints + ~0.5 GB host (est.)
+  leaves ~0 GB of RAM free for other apps (est.)
   answers at ~69 tok/s
 ```
 

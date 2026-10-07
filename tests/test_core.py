@@ -46,3 +46,68 @@ def test_sizing_tiers_16gb():
 def test_pick_prefers_accuracy_then_speed_on_ties():
     assert catalog.pick(15.9, "zh") == "qwen3.8-27b-q3"      # 5.5 points better in Chinese
     assert catalog.pick(15.9, "en") == "gemma4-26b-a4b-qat"  # tie on accuracy, faster
+
+
+def test_ram_estimate_components():
+    from localllm import sizing
+    est = sizing.ram_estimate_gb({"gb": 13.3}, [])
+    assert est == {"embed_gb": 0.3, "host_gb": 0.5, "prompt_cache_gb": 8.0,
+                   "checkpoints_gb": 0.0, "total_gb": 8.8}
+    assert est["embed_gb"] < est["total_gb"]
+
+
+def test_ram_estimate_uses_per_model_cpu_mapped():
+    from localllm import sizing
+    est = sizing.ram_estimate_gb({"gb": 12.2, "cpu_mapped_gb": 0.51}, [])
+    assert est["embed_gb"] == 0.5  # measured field wins over the 2% heuristic (0.2)
+
+
+def test_ram_estimate_reads_server_args():
+    from localllm import sizing
+    m = {"gb": 12.2, "cpu_mapped_gb": 0.51, "kv_kb_per_token": 34.8}
+    # a 0.2-style low-RAM profile: small prompt cache, few checkpoints
+    est = sizing.ram_estimate_gb(m, ["--cache-ram", "512", "--ctx-checkpoints", "2", "-c", "4096"])
+    assert est["prompt_cache_gb"] == 0.5
+    assert est["checkpoints_gb"] == round(2 * 4096 * 34.8 / 2**20, 1)
+    assert est["total_gb"] == round(0.51 + 0.5 + 0.5 + 2 * 4096 * 34.8 / 2**20, 1)
+    # --flag=value spelling and -np slots
+    est2 = sizing.ram_estimate_gb(m, ["--cache-ram=1024", "-np", "2", "--ctx-checkpoints=1", "--ctx-size=8192"])
+    assert est2["prompt_cache_gb"] == 1.0
+    assert est2["checkpoints_gb"] == round(2 * 1 * 8192 * 34.8 / 2**20, 1)
+
+
+def test_ram_estimate_counts_llama_defaults():
+    # localllm doesn't pass --cache-ram/--ctx-checkpoints itself, so llama.cpp
+    # defaults (8192 MiB cache, 32 checkpoints/slot) are what blow RAM up in practice
+    from localllm import catalog, runtime, sizing
+    from localllm.bench import system_language
+    key = catalog.pick(15.9, system_language())
+    m = catalog.MODELS[key]
+    args = runtime.server_args(runtime.Path(m["file"]), "Vulkan0", 8080, 8192, m["mtp"])
+    est = sizing.ram_estimate_gb(m, args)
+    assert est["prompt_cache_gb"] == 8.0
+    assert est["checkpoints_gb"] == round(32 * 8192 * m["kv_kb_per_token"] / 2**20, 1)
+    assert est["total_gb"] > 8.0  # no longer under-reports the big RAM users
+
+
+def test_ram_available_gb_is_positive():
+    assert runtime.ram_available_gb() > 0
+
+
+def test_doctor_shows_ram_line(monkeypatch, capsys):
+    from localllm import catalog, cli, runtime, sizing
+    from localllm.bench import system_language
+    dev = {"id": "Vulkan0", "name": "AMD Radeon RX 9070 XT", "total_gb": 15.9}
+    monkeypatch.setattr(cli, "_machine", lambda: (cli.Path("llama-server"), [dev], dev, 32.0))
+    monkeypatch.setattr(cli.runtime, "ram_available_gb", lambda: 28.0)
+    cli.cmd_doctor(None)
+    out = capsys.readouterr().out
+    key = catalog.pick(15.9, system_language())
+    m = catalog.MODELS[key]
+    ctx = sizing.context_tokens(15.9, m)
+    launch = runtime.server_args(cli.Path(m["file"]), dev["id"], 8080, ctx, m["mtp"])
+    est = sizing.ram_estimate_gb(m, launch)
+    assert (f"uses ~{est['total_gb']:.1f} GB of system RAM: ~{est['embed_gb']:.1f} GB "
+            f"embeddings/CPU-mapped + ~{est['prompt_cache_gb']:.1f} GB prompt cache + "
+            f"~{est['checkpoints_gb']:.1f} GB ctx checkpoints + ~{est['host_gb']:.1f} GB host (est.)") in out
+    assert f"leaves ~{max(0.0, 28.0 - est['total_gb']):.0f} GB of RAM free for other apps (est.)" in out
