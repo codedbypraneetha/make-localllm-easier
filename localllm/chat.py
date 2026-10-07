@@ -36,6 +36,7 @@ def stream(url: str, messages: list[dict], show_thinking: bool, out=sys.stdout) 
                                  headers={"Content-Type": "application/json"})
     answer, timings, thinking_shown = [], {}, False
     with urllib.request.urlopen(req, timeout=3600) as r:
+        model = r.headers.get("X-Localllm-Model")      # smart routing: which model answered, and why
         for raw in r:
             line = raw.decode("utf-8", "replace").strip()
             if not line.startswith("data:") or line == "data: [DONE]":
@@ -57,7 +58,7 @@ def stream(url: str, messages: list[dict], show_thinking: bool, out=sys.stdout) 
                 out.write(delta["content"])
                 out.flush()
     out.write("\n")
-    return "".join(answer), timings
+    return "".join(answer), {**timings, "model": model} if model else timings
 
 
 def repl(url: str, model_label: str = "") -> None:
@@ -107,4 +108,5 @@ def repl(url: str, model_label: str = "") -> None:
             continue
         messages.append({"role": "assistant", "content": answer})
         if t.get("predicted_per_second"):
-            print(f"\x1b[2m{t['predicted_n']} tokens, {t['predicted_per_second']:.0f} tok/s\x1b[0m")
+            who = f"  [{t['model']}]" if t.get("model") else ""
+            print(f"\x1b[2m{t['predicted_n']} tokens, {t['predicted_per_second']:.0f} tok/s{who}\x1b[0m")

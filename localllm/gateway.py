@@ -15,6 +15,7 @@ import json
 import re
 import threading
 import time
+from contextlib import nullcontext
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -100,7 +101,14 @@ def openai_to_gemini(text: str, finish: str | None = None, usage: dict | None = 
 
 # ---- HTTP server ------------------------------------------------------------------------------------------------------
 
-def make_handler(upstream: str, model_name: str):
+def make_handler(upstream, model_name: str):
+    """`upstream` is a llama-server URL, or a pool.Pool that picks (and lazy-loads) a model per request."""
+    def local(body: dict):
+        return nullcontext((upstream, None)) if isinstance(upstream, str) else upstream.use(body)
+
+    def base_url() -> str:
+        return upstream if isinstance(upstream, str) else upstream.url
+
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -139,12 +147,18 @@ def make_handler(upstream: str, model_name: str):
 
         def _proxy(self, method: str):
             body = self.rfile.read(int(self.headers.get("Content-Length") or 0)) if method == "POST" else None
-            target, route_hdr, hdrs = upstream, "local", {}
+            route_hdr, hdrs, cloud = "local", {}, None
             if method == "POST" and self.path in ("/v1/chat/completions", "/v1/messages"):
                 d = router.decide(json.loads(body or b"{}"), self.path)
-                route_hdr = d.label
-                if d.provider:
-                    target, hdrs, body = d.provider.url_base, d.provider.headers(self.path), d.provider.adapt(body, self.path)
+                route_hdr, cloud = d.label, d.provider
+                if cloud:
+                    hdrs, body = cloud.headers(self.path), cloud.adapt(body, self.path)
+                    return self._send(method, cloud.url_base, body, hdrs, route_hdr, None)
+                with local(json.loads(body or b"{}")) as (url, model_hdr):
+                    return self._send(method, url, body, hdrs, route_hdr, model_hdr)
+            self._send(method, base_url(), body, hdrs, route_hdr, None)
+
+        def _send(self, method: str, target: str, body, hdrs: dict, route_hdr: str, model_hdr: str | None):
             fwd = {k: v for k, v in self.headers.items()
                    if k.lower() not in HOP_BY_HOP and not (hdrs and k.lower() in ("authorization", "x-api-key"))}
             req = urllib.request.Request(target.rstrip("/") + self.path, data=body, method=method, headers={**fwd, **hdrs})
@@ -157,6 +171,8 @@ def make_handler(upstream: str, model_name: str):
                 if k.lower() not in ("transfer-encoding", "connection", "content-length"):
                     self.send_header(k, v)
             self.send_header("X-Localllm-Route", route_hdr)
+            if model_hdr:
+                self.send_header("X-Localllm-Model", model_hdr)
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
             while chunk := r.read(8192) if not hasattr(r, "read1") else r.read1(8192):
@@ -187,9 +203,13 @@ def make_handler(upstream: str, model_name: str):
             req = ollama_to_openai(self._body(), chat)
             stream = req["stream"]
             req["stream"] = True
-            r = _post(upstream + "/v1/chat/completions", req)
+            with local(req) as (url, model_hdr):
+                self._ollama_reply(_post(url + "/v1/chat/completions", req), chat, stream,
+                                   {"X-Localllm-Model": model_hdr} if model_hdr else None)
+
+        def _ollama_reply(self, r, chat: bool, stream: bool, extra: dict | None):
             if stream:
-                self._stream_start("application/x-ndjson")
+                self._stream_start("application/x-ndjson", extra)
                 timings = {}
                 for c in _sse_chunks(r):
                     timings = c.get("timings", timings)
@@ -203,17 +223,21 @@ def make_handler(upstream: str, model_name: str):
             for c in _sse_chunks(r):
                 timings = c.get("timings", timings)
                 text.append((c.get("choices") or [{}])[0].get("delta", {}).get("content") or "")
-            self._json(200, openai_to_ollama("".join(text), model_name, chat, True, timings))
+            self._json(200, openai_to_ollama("".join(text), model_name, chat, True, timings), extra)
 
         def _gemini(self, stream: bool):
             req = gemini_to_openai(self._body())
+            with local(req) as (url, model_hdr):
+                self._gemini_reply(url, req, stream, {"X-Localllm-Model": model_hdr} if model_hdr else None)
+
+        def _gemini_reply(self, url: str, req: dict, stream: bool, extra: dict | None):
             if not stream:
-                r = json.load(_post(upstream + "/v1/chat/completions", {**req, "stream": False}))
+                r = json.load(_post(url + "/v1/chat/completions", {**req, "stream": False}))
                 ch = r["choices"][0]
                 return self._json(200, openai_to_gemini(ch["message"].get("content") or "", ch.get("finish_reason"),
-                                                        r.get("usage")))
-            r = _post(upstream + "/v1/chat/completions", {**req, "stream": True})
-            self._stream_start("text/event-stream")
+                                                        r.get("usage")), extra)
+            r = _post(url + "/v1/chat/completions", {**req, "stream": True})
+            self._stream_start("text/event-stream", extra)
             for c in _sse_chunks(r):
                 ch = (c.get("choices") or [{}])[0]
                 text = ch.get("delta", {}).get("content") or ""
@@ -225,7 +249,7 @@ def make_handler(upstream: str, model_name: str):
     return Handler
 
 
-def serve(upstream: str, host: str = "127.0.0.1", port: int = 8080, model_name: str = "local") -> ThreadingHTTPServer:
+def serve(upstream, host: str = "127.0.0.1", port: int = 8080, model_name: str = "local") -> ThreadingHTTPServer:
     srv = ThreadingHTTPServer((host, port), make_handler(upstream, model_name))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv

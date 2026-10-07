@@ -71,13 +71,47 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _start(key: str | None, port: int, ctx: int) -> tuple[subprocess.Popen, str]:
+class _PoolProc:
+    """Looks like a Popen to the commands: wait()/terminate() for a smart pool of lazy-loaded models."""
+    def __init__(self, p, gw):
+        self.pool, self.gateway = p, gw
+
+    def wait(self):
+        while True:
+            time.sleep(3600)
+
+    def terminate(self):
+        self.pool.close()
+        self.gateway.shutdown()
+
+
+def _start(key: str | None, port: int, ctx: int, models: str | None = None):
     server, _devs, dev, _ram = _machine()
     from .bench import system_language
     ram_free = runtime.ram_available_gb()
+    if models:
+        if not dev:
+            sys.exit("[localllm] --models needs a GPU")
+        keys = [k for k in catalog.MODELS if catalog.cpu_moe_layers(k, dev["total_gb"], ram_free) == 0]             if models == "auto" else models.split(",")
+        bad = [k for k in keys if k not in catalog.MODELS]
+        if bad or not keys:
+            sys.exit(f"[localllm] unknown or unfitting models: {bad or models}. See `localllm list`.")
+        from . import gateway, pool
+        first = catalog.pick(dev["total_gb"], system_language(), ram_free, candidates=keys)
+        _say(f"smart routing between {', '.join(keys)}: one loaded at a time, swapped when another is clearly better")
+        p = pool.Pool(keys, lambda k: _launch(k, server, dev, ctx, ram_free), dev["total_gb"], ram_free, first)
+        return _PoolProc(p, gateway.serve(p, port=port, model_name="localllm-auto")), f"http://127.0.0.1:{port}"
     key = key or (catalog.pick(dev["total_gb"], system_language(), ram_free) if dev else None)
     if not key:
         sys.exit("[localllm] no measured model fits this GPU yet (need >= 10 GB VRAM). See `localllm list`.")
+    proc, url = _launch(key, server, dev, ctx, ram_free)
+    from . import gateway
+    proc.gateway = gateway.serve(url, port=port, model_name=key)
+    return proc, f"http://127.0.0.1:{port}"
+
+
+def _launch(key: str, server, dev, ctx: int, ram_free: float) -> tuple[subprocess.Popen, str]:
+    """Start llama-server for `key` on a private port; return once it answers /health."""
     cpu_moe = (catalog.cpu_moe_layers(key, dev["total_gb"], ram_free) or 0) if dev else 0
     if cpu_moe:
         _say(f"{key} doesn't fit the GPU whole: keeping the experts of {cpu_moe} layers in system RAM")
@@ -101,9 +135,7 @@ def _start(key: str | None, port: int, ctx: int) -> tuple[subprocess.Popen, str]
                 if spill and spill > runtime.SPILL_WARN_GB:
                     _say(f"warning: {spill:.1f} GB of the model spilled from the GPU into system RAM - answers will be "
                          "slower. Close other GPU-heavy apps or pick a smaller model (`localllm list`).")
-                from . import gateway
-                proc.gateway = gateway.serve(url, port=port, model_name=key)
-                return proc, f"http://127.0.0.1:{port}"
+                return proc, url
         except OSError:
             pass
         time.sleep(0.3)
@@ -112,7 +144,7 @@ def _start(key: str | None, port: int, ctx: int) -> tuple[subprocess.Popen, str]
 
 
 def cmd_run(a) -> None:
-    proc, url = _start(a.model, a.port, a.ctx)
+    proc, url = _start(a.model, a.port, a.ctx, getattr(a, "models", None))
     _say(f"ready. chat: {url}   API: {url}/v1 (OpenAI), {url}/v1/messages (Anthropic), {url}/api (Ollama), "
          f"{url}/v1beta (Gemini)   Ctrl+C to stop")
     if not a.no_browser:
@@ -131,7 +163,7 @@ def cmd_chat(a) -> None:
         return
     if a.url:
         sys.exit(f"[localllm] nothing is answering at {a.url}")
-    proc, url = _start(a.model, a.port, a.ctx)
+    proc, url = _start(a.model, a.port, a.ctx, getattr(a, "models", None))
     try:
         chat.repl(url, a.model or "")
     finally:
@@ -274,6 +306,8 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--ctx", type=int, default=8192, help="context length in tokens")
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--models", metavar="auto|A,B", help="smart routing: pick the best of these models per message, "
+                    "lazy-loading one at a time (auto = every model that fits this GPU)")
     ap.set_defaults(fn=cmd_run)
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
@@ -283,12 +317,14 @@ def main() -> None:
     c = sub.add_parser("chat"); c.add_argument("model", nargs="?", choices=list(catalog.MODELS))
     c.add_argument("--url", help="chat with an already running OpenAI-compatible server instead")
     c.add_argument("--port", type=int, default=8080); c.add_argument("--ctx", type=int, default=8192)
+    c.add_argument("--models", metavar="auto|A,B")
     c.set_defaults(fn=cmd_chat)
     r = sub.add_parser("route", help="show routing config, or --test a prompt local vs cloud")
     r.add_argument("--test", metavar="PROMPT"); r.add_argument("--port", type=int, default=8080)
     r.set_defaults(fn=cmd_route)
     s = sub.add_parser("serve"); s.add_argument("model", nargs="?", choices=list(catalog.MODELS))
     s.add_argument("--port", type=int, default=8080); s.add_argument("--ctx", type=int, default=8192)
+    s.add_argument("--models", metavar="auto|A,B")
     s.set_defaults(fn=cmd_serve)
     e = sub.add_parser("eval"); e.add_argument("--url", default="http://127.0.0.1:8080")
     e.add_argument("--name", default="model"); e.add_argument("--limit", type=int, default=0)

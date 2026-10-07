@@ -140,6 +140,23 @@ def decide(body: dict, path: str, cfg: dict | None = None) -> Decision:
     return Decision("local")
 
 
+SWITCH_POINTS = 3.0   # swapping models costs seconds on one GPU: only switch for a clear accuracy gain
+
+
+def pick_local(text: str, keys: list[str], current: str | None, vram_gb: float, ram_free_gb: float = 0.0) -> tuple[str, str]:
+    """Smart local routing (0.6): the measured-best model for this message's language among `keys`, with hysteresis -
+    stay on the loaded model unless the other one scores >= SWITCH_POINTS higher. Returns (model key, reason)."""
+    from . import catalog
+    lang = detect_language(text)
+    best = catalog.pick(vram_gb, lang, ram_free_gb, candidates=keys) or current or keys[0]
+    if current and best != current and current in keys:
+        gain = catalog.score(best, lang) - catalog.score(current, lang)
+        if gain < SWITCH_POINTS:
+            return current, f"{lang}: kept loaded model ({best} only {gain:+.1f} pts)"
+        return best, f"{lang}: {gain:+.1f} pts vs {current}"
+    return best, f"{lang}: best measured"
+
+
 def compare(prompt: str, local_url: str, cfg: dict | None = None) -> list[dict]:
     """`localllm route --test`: the same prompt to the local model and to each configured cloud provider."""
     import time

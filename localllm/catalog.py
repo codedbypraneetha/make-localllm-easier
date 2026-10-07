@@ -81,10 +81,10 @@ def speed(key: str, vram_gb: float, ram_free_gb: float = 0.0) -> float:
     return m["tok_s_9070xt"] * OFFLOAD_SPEED
 
 
-def pick(vram_gb: float, lang: str | None = None, ram_free_gb: float = 0.0) -> str | None:
+def pick(vram_gb: float, lang: str | None = None, ram_free_gb: float = 0.0, candidates=None) -> str | None:
     """Most accurate model (for `lang` when measured) that runs on this PC - whole on the GPU, or a MoE with some
     experts in RAM - with an 8k context; near-ties go to the faster one."""
-    ok = [k for k in MODELS if cpu_moe_layers(k, vram_gb, ram_free_gb) is not None]
+    ok = [k for k in (candidates or MODELS) if cpu_moe_layers(k, vram_gb, ram_free_gb) is not None]
     if not ok:
         return None
     best = max(score(k, lang) for k in ok)

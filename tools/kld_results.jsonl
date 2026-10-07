@@ -1,0 +1,4 @@
+{"model": "Qwen3.8-27B-UD-Q3_K_XL.gguf", "lang": "ar", "kld_mean": 0.07817, "kld_p99": 1.635943, "same_top_pct": 92.549, "ppl": 2.555155}
+{"model": "Qwen3.8-27B-UD-Q3_K_XL.gguf", "lang": "en", "kld_mean": 0.020859, "kld_p99": 0.191069, "same_top_pct": 93.186, "ppl": 7.136581}
+{"model": "Qwen3.8-27B-UD-Q3_K_XL.gguf", "lang": "hi", "kld_mean": 0.03696, "kld_p99": 0.366507, "same_top_pct": 90.196, "ppl": 8.176881}
+{"model": "Qwen3.8-27B-UD-Q3_K_XL.gguf", "lang": "th", "kld_mean": 0.034378, "kld_p99": 0.338134, "same_top_pct": 91.667, "ppl": 5.229054}
