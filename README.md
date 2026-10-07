@@ -93,9 +93,10 @@ under 2 points as a tie and picks the faster model.
 
 1. **2-bit costs 8-13 points, and lower-resource languages pay the most.** Hindi, Arabic and Thai lose 13; English,
    Chinese and Spanish about 8-9. A 177B MoE squeezed to 1.6 bits scored *below* a 27B at 3 bits.
-2. **Calibrating the quantization on your language doesn't help at ~3.5 bits.** A Thai-text importance matrix scored the
-   same as the stock one in Thai, English and Chinese (64.8 vs 64.6 Thai). At this level the number of bits matters,
-   the calibration text doesn't.
+2. **Calibrating the quantization on your languages helps at 2-bit, not at ~3.5 bits.** Same 2-bit recipe, only the
+   importance matrix changed: stock 45.0 Thai, Thai-text 51.7, a mixed chat-format set (English, Thai, Hindi, Arabic,
+   code, math) 51.0 Thai with the best average across Thai/Hindi/Arabic/English (61.2 vs 58.7). At ~3.5 bits a Thai
+   matrix scored the same as the stock one (64.8 vs 64.6). Details in [#24](https://github.com/phonology024/make-localllm-easier/issues/24).
 3. **AMD/Intel cards without Resizable BAR lose up to 1.7x decode speed** in llama.cpp's Vulkan backend. Hybrid DeltaNet
    models (Qwen3.5/3.8) suffer most: they rewrite a 3 MB state per layer per token.
 4. **Qwen3.8 GGUFs ship a multi-token-prediction head.** Drafting 2 tokens with it adds ~40% decode speed for free;
