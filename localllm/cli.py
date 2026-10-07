@@ -93,18 +93,19 @@ def _start(key: str | None, port: int, ctx: int, models: str | None = None):
     if models:
         if not dev:
             sys.exit("[localllm] --models needs a GPU")
-        keys = [k for k in catalog.MODELS if catalog.cpu_moe_layers(k, dev["total_gb"], ram_free) == 0]             if models == "auto" else models.split(",")
+        keys = [k for k in catalog.MODELS if catalog.cpu_moe_layers(k, dev["total_gb"], ram_free) == 0
+                and not catalog.below_floor(k)] if models == "auto" else models.split(",")
         bad = [k for k in keys if k not in catalog.MODELS]
         if bad or not keys:
             sys.exit(f"[localllm] unknown or unfitting models: {bad or models}. See `localllm list`.")
         from . import gateway, pool
         first = catalog.pick(dev["total_gb"], system_language(), ram_free, candidates=keys)
-        _say(f"smart routing between {', '.join(keys)}: one loaded at a time, swapped when another is clearly better")
+        _say(f"smart routing between {', '.join(keys)}")
         need = sum(catalog.MODELS[k]["gb"] + catalog.MODELS[k]["kv_kb_per_token"] * ctx / 2**20
                    + catalog.MODELS[k]["fixed_cache_gb"] for k in keys) + 1.0     # + ~1 GB driver/compute buffers
         resident = need <= dev["total_gb"]
         _say(f"all {len(keys)} models fit in VRAM together ({need:.1f} GB): no swaps" if resident else
-             f"they need {need:.1f} GB together: lazy-loading one at a time")
+             f"they need {need:.1f} GB together: one at a time, swapped only when another is clearly better")
         p = pool.Pool(keys, lambda k: _launch(k, server, dev, ctx, ram_free), dev["total_gb"], ram_free, first, resident)
         return _PoolProc(p, gateway.serve(p, port=port, model_name="localllm-auto")), f"http://127.0.0.1:{port}"
     key = key or (catalog.pick(dev["total_gb"], system_language(), ram_free) if dev else None)
