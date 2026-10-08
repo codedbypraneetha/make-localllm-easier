@@ -20,13 +20,20 @@ Task suites (opt-in with --suites, they generate text so they are slower):
             tests run inside a locked-down Docker container (see sandbox.py) - never on your PC. Needs Docker.
             Two tests are repaired (CODEGEN_FIXES): HumanEval/32's check can't pass as published, and one of
             Mbpp/255's 112 inputs needs 2.2 GB, over the sandbox's 1 GB cap.
+  vision    MaXM (Changpinyo et al. 2023, CC-BY-4.0; Crossmodal-3600 images): questions about photos taken in each
+            language's own region, in 7 languages incl. Thai; a short answer counts when it matches a reference after
+            normalising case, punctuation and spaces (or contains it, for answers phrased as a short sentence).
+            Needs a server started with the vision projector (`localllm serve --vision`)
 """
 from __future__ import annotations
 
 import ast
+import base64
 import json
 import locale
 import time
+import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -75,7 +82,9 @@ CODEGEN_FIXES = {
                      r"rel_tol=1e-07, abs_tol=\1)"),
     "Mbpp/255": (r"\[\['Dog', 'Cat', 'CatBird', 'Bird', 'Fish'\], 77\], ", ""),
 }
-SUITES = ("global", "regional", "math", "translate", "code", "codegen")
+SUITES = ("global", "regional", "math", "translate", "code", "codegen", "vision")
+MAXM = {"en": "en", "fr": "fr", "hi": "hi", "he": "iw", "ro": "ro", "th": "th", "zh": "zh"}   # ISO -> dataset split
+VISION_SYSTEM = "Look at the image and answer the question in {lang} with one word or a short phrase. Reply with the answer only."
 
 
 def system_language() -> str:
@@ -91,24 +100,43 @@ def system_language() -> str:
 
 def available(lang: str, suites: tuple[str, ...] = ("global", "regional")) -> list[str]:
     have = {"global": lang in GLOBAL_LANGS, "regional": lang in INCLUDE or lang == "th", "math": lang in MGSM_LANGS,
-            "translate": lang in FLORES and lang != "en", "code": lang == "en", "codegen": lang == "en"}
+            "translate": lang in FLORES and lang != "en", "code": lang == "en", "codegen": lang == "en",
+            "vision": lang in MAXM}
     return [s for s in suites if have[s]]
 
 
-def _rows(ds: str, cfg: str, split: str = "test") -> list[dict]:
+def _get_json(url: str, tries: int = 6):
+    """datasets-server answers 429/5xx under load: back off and retry rather than lose the run."""
+    for i in range(tries):
+        try:
+            return json.load(urllib.request.urlopen(url, timeout=120))
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 500, 502, 503, 504) or i == tries - 1:
+                raise
+        except urllib.error.URLError:
+            if i == tries - 1:
+                raise
+        time.sleep(min(60, 2 ** (i + 1)))
+
+
+def _rows(ds: str, cfg: str, split: str = "test", page: int = 100, limit: int = 0) -> list[dict]:
+    """All rows of a split, or the first `limit`."""
     out, off = [], 0
     while True:
         u = ROWS.format(ds=urllib.parse.quote(ds), cfg=urllib.parse.quote(cfg), split=split, off=off)
-        d = json.load(urllib.request.urlopen(u, timeout=120))
+        n = min(page, limit - len(out)) if limit else page
+        d = _get_json(u.replace("length=100", f"length={n}"))
         out += [r["row"] for r in d["rows"]]
-        off += 100
-        if off >= d.get("num_rows_total", 0) or not d["rows"]:
+        off += n
+        if off >= d.get("num_rows_total", 0) or not d["rows"] or (limit and len(out) >= limit):
             return out
 
 
-def load(suite: str, lang: str) -> list[dict]:
-    """[{'q': question, 'opts': [..], 'ans': index}] cached under ~/.localllm/bench/."""
-    cache = HOME / "bench" / f"{suite}-{lang}.json"
+def load(suite: str, lang: str, limit: int = 0) -> list[dict]:
+    """[{'q': question, 'opts': [..], 'ans': index}] cached under ~/.localllm/bench/. `limit` is honoured for the
+    vision suite only, whose rows carry photos (a whole split is ~100 MB through the rows API)."""
+    limit = limit if suite == "vision" else 0
+    cache = HOME / "bench" / (f"{suite}-{lang}-first{limit}.json" if limit else f"{suite}-{lang}.json")
     if cache.exists():
         return json.loads(cache.read_text(encoding="utf-8"))
     items = []
@@ -143,6 +171,19 @@ def load(suite: str, lang: str) -> list[dict]:
     elif suite == "math" and lang in MGSM_LANGS:
         for r in _rows("juletxara/mgsm", lang):
             items.append({"q": r["question"], "ans": int(r["answer_number"])})
+    elif suite == "vision" and lang in MAXM:
+        img_dir = HOME / "bench" / "maxm"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        # rows carry the photo, so small pages, and only as many as the run asks for
+        for r in _rows("floschne/maxm", "default", MAXM[lang], page=10, limit=limit):
+            path = img_dir / f"{r['image_id']}.jpg"
+            if not path.exists():
+                raw = (r.get("image") or {}).get("bytes")
+                data = bytes(raw) if isinstance(raw, list) else \
+                    urllib.request.urlopen(r["image_url"], timeout=120).read()     # cell truncated: fetch the photo
+                path.write_bytes(data)
+            refs = sorted({a for a in (r.get("answers") or []) + (r.get("processed_answers") or []) if a})
+            items.append({"q": r["question"], "img": path.name, "refs": refs, "lang": lang})
     elif suite == "regional":
         for r in _rows("CohereLabs/include-lite-44", INCLUDE[lang]):
             opts = r["choices"] if isinstance(r["choices"], list) else ast.literal_eval(r["choices"])
@@ -307,6 +348,35 @@ def ask_codegen(url: str, item: dict) -> str:
     return json.load(urllib.request.urlopen(req, timeout=600))["choices"][0]["message"].get("content") or ""
 
 
+def _norm(text: str) -> str:
+    text = "".join(" " if unicodedata.category(ch)[0] in "PS" else ch for ch in unicodedata.normalize("NFKC", text))
+    return " ".join(text.lower().split())
+
+
+def vqa_match(pred: str, refs: list[str]) -> bool:
+    """Same as a reference after normalising, or a short reply that contains one ("it is red" for "red")."""
+    p = _norm(pred)
+    for r in map(_norm, refs):
+        if r and (p == r or (r in p and len(p) <= len(r) + 20)):
+            return True
+    return False
+
+
+def ask_vision(url: str, item: dict) -> bool:
+    lang = LANG_NAMES.get(item["lang"]) or INCLUDE.get(item["lang"]) or \
+        {"th": "Thai", "he": "Hebrew", "ro": "Romanian"}.get(item["lang"], item["lang"])
+    img = base64.b64encode((HOME / "bench" / "maxm" / item["img"]).read_bytes()).decode()
+    body = {"messages": [{"role": "system", "content": VISION_SYSTEM.format(lang=lang)},
+                         {"role": "user", "content": [
+                             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img}"}},
+                             {"type": "text", "text": item["q"]}]}],
+            "max_tokens": 32, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}}
+    req = urllib.request.Request(url.rstrip("/") + "/v1/chat/completions", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    text = json.load(urllib.request.urlopen(req, timeout=600))["choices"][0]["message"].get("content") or ""
+    return vqa_match(text.strip(), item["refs"])
+
+
 def _save(name: str, res: dict) -> None:
     out = HOME / "results.json"
     allres = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
@@ -323,7 +393,7 @@ def run(url: str, name: str, langs: list[str], limit: int = 0, suites: tuple[str
         if not mine:
             print(f"  {lang}: no {'/'.join(suites)} benchmark yet (contributions welcome)")
         for suite in mine:
-            items = load(suite, lang)
+            items = load(suite, lang, limit)
             items = items[:limit] if limit else items
             if suite == "translate":          # a chrF++ score, not a right/wrong count
                 scores = [ask_translate(url, it) for it in items]
@@ -349,7 +419,7 @@ def run(url: str, name: str, langs: list[str], limit: int = 0, suites: tuple[str
                 print(f"  {lang:3} {suite:9} {acc:5.1f}%  ({ok}/{len(items)} pass the EvalPlus tests)", flush=True)
                 _save(name, {**res, "_meta": {"model": name, "seconds": round(time.time() - t0), "limit": limit}})
                 continue
-            check = {"math": ask_math, "code": ask_code}.get(suite)
+            check = {"math": ask_math, "code": ask_code, "vision": ask_vision}.get(suite)
             ok = sum(check(url, it) if check else ask(url, it) == it["ans"] for it in items)
             acc = round(100 * ok / len(items), 1)
             res[f"{lang}/{suite}"] = {"acc": acc, "correct": ok, "n": len(items)}
