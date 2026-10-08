@@ -56,7 +56,7 @@ buffers in a 256 MB host-visible heap backed by system RAM and decode drops up t
 conversation is remembered, `/save` writes it to a file, `/think` shows the model's reasoning, Ctrl+C stops an answer.
 
 **Can I use it as an Ollama, OpenAI, Anthropic or Gemini replacement?** Yes. One local endpoint at
-`http://127.0.0.1:8080` speaks all four APIs, so existing apps and SDKs only need a new base URL. See
+`http://127.0.0.1:8080` speaks all four APIs, tool / function calling included, so existing apps and SDKs only need a new base URL. See
 [docs/apis.md](docs/apis.md).
 
 **Can it fall back to my cloud API key?** Only if you turn it on. Routing is off by default; with your own key in an
