@@ -25,6 +25,16 @@ pad_token_id would shift position embeddings by one). Q8_0 = 126 MB. Inputs need
 | Laya multilingual (zero-shot) | 77.8% | 71.2% | 103 ms median | 614 MB |
 | keyword rules (`detect_task`) | 56.9% | - | < 1 ms | 0 |
 
+GPU vs CPU (RX 9070 XT, ReBAR off / i7-12700K, `bench_throughput.py` + `train_router.py --ngl`):
+
+| | GPU (Vulkan) | CPU |
+|---|---|---|
+| one message (what a user feels) | 14.8 ms median | **5.1 ms median** |
+| bulk embedding (training) | **411 texts/s** | 232 texts/s |
+
+So: embed training data on the GPU, run the router on the CPU at chat time (it is faster for single short messages
+and takes no VRAM away from the main model).
+
 Caveat: the shared test set is written by an AI (Claude) too, and generated training items are AI-written; 10 of 144 test
 items have a training item with cosine > 0.95 (the filtered column removes such cases). A human-written test set from
 native speakers is the next proof needed.
