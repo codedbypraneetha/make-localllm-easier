@@ -7,18 +7,27 @@
 
 Chat requests go through `router.decide()` first: local by default; forwarded to the user's own cloud key only when the
 user enabled it in ~/.localllm/route.json and a rule says so. The decision is reported in the X-Localllm-Route header.
+
+LAN mode: listening on anything but loopback needs an API key. Clients send it the way their SDK does -
+`Authorization: Bearer KEY` (OpenAI, Ollama), `x-api-key` (Anthropic), `x-goog-api-key` or `?key=` (Gemini). It is
+checked in constant time and stripped before forwarding, so it never reaches llama-server or a cloud provider. Requests
+from this PC itself need no key: any local program can already reach llama-server's private port.
 Standard library only.
 """
 from __future__ import annotations
 
+import hmac
+import ipaddress
 import json
 import re
+import socket
 import threading
 import time
 from contextlib import nullcontext
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from . import router
 
@@ -27,6 +36,34 @@ PASSTHROUGH = ("/v1/chat/completions", "/v1/completions", "/v1/models", "/v1/emb
 HOP_BY_HOP = {"host", "content-length", "connection", "keep-alive", "transfer-encoding", "te", "trailer", "upgrade",
               "proxy-authorization", "proxy-connection"}
 GEMINI = re.compile(r"^/v1beta/models/([^/:]+):(generateContent|streamGenerateContent)")
+KEY_HEADERS = ("authorization", "x-api-key", "x-goog-api-key")   # where clients put the gateway's key
+
+
+def is_loopback(host: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return host == "localhost"
+    mapped = getattr(ip, "ipv4_mapped", None)        # an IPv4 client of a dual-stack socket: ::ffff:127.0.0.1
+    return (mapped or ip).is_loopback
+
+
+def split_key(path: str) -> tuple[str, str | None]:
+    """Path without its ?key= parameter (Gemini's way of sending a key), and that key."""
+    url = urlsplit(path)
+    if not url.query:
+        return path, None
+    params = parse_qsl(url.query, keep_blank_values=True)
+    key = next((v for k, v in params if k == "key"), None)
+    rest = urlencode([(k, v) for k, v in params if k != "key"])
+    return url.path + ("?" + rest if rest else ""), key
+
+
+def presented_keys(headers, query_key: str | None) -> list[str]:
+    auth = headers.get("Authorization") or ""
+    keys = [auth[7:].strip() if auth.lower().startswith("bearer ") else "",
+            headers.get("x-api-key") or "", headers.get("x-goog-api-key") or "", query_key or ""]
+    return [k for k in keys if k]
 
 
 def _post(url: str, body: dict, headers: dict | None = None, timeout: int = 3600):
@@ -45,23 +82,59 @@ def _sse_chunks(resp):
 
 # ---- format translation (pure functions, unit-tested) ----------------------------------------------------------------
 
+def _args_obj(arguments) -> dict:
+    """OpenAI sends tool-call arguments as a JSON string; Ollama and Gemini want the object."""
+    if isinstance(arguments, dict):
+        return arguments
+    try:
+        out = json.loads(arguments or "{}")
+        return out if isinstance(out, dict) else {"value": out}
+    except ValueError:
+        return {"_raw": arguments}
+
+
+def _call(i: int, name: str, args) -> dict:
+    return {"id": f"call_{i}", "type": "function",
+            "function": {"name": name, "arguments": args if isinstance(args, str) else json.dumps(args)}}
+
+
 def ollama_to_openai(body: dict, chat: bool) -> dict:
-    msgs = body.get("messages") or []
-    if not chat:
+    msgs = []
+    if chat:
+        pending: list[str] = []                         # ids of tool calls not answered yet, in order
+        for m in body.get("messages") or []:
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                calls = [_call(len(pending) + i, c["function"]["name"], c["function"].get("arguments") or {})
+                         for i, c in enumerate(m["tool_calls"])]
+                pending += [c["id"] for c in calls]
+                msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": calls})
+            elif m.get("role") == "tool":
+                msgs.append({"role": "tool", "content": m.get("content") or "",
+                             "tool_call_id": pending.pop(0) if pending else "call_0"})
+            else:
+                msgs.append({k: v for k, v in m.items() if k in ("role", "content")})
+    else:
         msgs = ([{"role": "system", "content": body["system"]}] if body.get("system") else []) + \
                [{"role": "user", "content": body.get("prompt", "")}]
     opts = body.get("options") or {}
     out = {"messages": msgs, "stream": bool(body.get("stream", True))}
+    if chat and body.get("tools"):
+        out["tools"] = body["tools"]                    # Ollama uses OpenAI's tool schema
     for src, dst in (("temperature", "temperature"), ("top_p", "top_p"), ("num_predict", "max_tokens"), ("seed", "seed")):
         if src in opts:
             out[dst] = opts[src]
     return out
 
 
-def openai_to_ollama(choice_text: str, model: str, chat: bool, done: bool, timings: dict | None = None) -> dict:
+def openai_to_ollama(choice_text: str, model: str, chat: bool, done: bool, timings: dict | None = None,
+                     tool_calls: list | None = None) -> dict:
     d = {"model": model, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "done": done}
     if chat:
         d["message"] = {"role": "assistant", "content": choice_text}
+        if tool_calls:
+            d["message"]["tool_calls"] = [{"function": {"name": c["function"]["name"],
+                                                        "arguments": _args_obj(c["function"].get("arguments"))}}
+                                          for c in tool_calls]
     else:
         d["response"] = choice_text
     if done and timings:
@@ -71,26 +144,72 @@ def openai_to_ollama(choice_text: str, model: str, chat: bool, done: bool, timin
     return d
 
 
+def _lower_types(schema):
+    """Gemini schemas may spell types in upper case (OBJECT, STRING); JSON Schema wants lower case."""
+    if isinstance(schema, dict):
+        return {k: (v.lower() if k == "type" and isinstance(v, str) else _lower_types(v)) for k, v in schema.items()}
+    if isinstance(schema, list):
+        return [_lower_types(x) for x in schema]
+    return schema
+
+
+GEMINI_CHOICE = {"AUTO": "auto", "ANY": "required", "NONE": "none"}
+
+
 def gemini_to_openai(body: dict) -> dict:
     msgs = []
     sys_inst = body.get("systemInstruction") or body.get("system_instruction")
     if sys_inst:
         msgs.append({"role": "system", "content": "".join(p.get("text", "") for p in sys_inst.get("parts", []))})
+    ids: dict[str, list[str]] = {}                      # function name -> ids of its unanswered calls
+    n = 0
     for c in body.get("contents", []):
-        role = "assistant" if c.get("role") == "model" else "user"
-        msgs.append({"role": role, "content": "".join(p.get("text", "") for p in c.get("parts", []))})
+        parts = c.get("parts", [])
+        text = "".join(p.get("text", "") for p in parts)
+        calls = [p.get("functionCall") or p.get("function_call") for p in parts
+                 if p.get("functionCall") or p.get("function_call")]
+        answers = [p.get("functionResponse") or p.get("function_response") for p in parts
+                   if p.get("functionResponse") or p.get("function_response")]
+        if calls:
+            oc = []
+            for fc in calls:
+                oc.append(_call(n, fc["name"], fc.get("args") or {}))
+                ids.setdefault(fc["name"], []).append(oc[-1]["id"])
+                n += 1
+            msgs.append({"role": "assistant", "content": text, "tool_calls": oc})
+        elif answers:
+            for fr in answers:
+                q = ids.get(fr["name"]) or []
+                msgs.append({"role": "tool", "tool_call_id": q.pop(0) if q else f"call_{fr['name']}",
+                             "content": json.dumps(fr.get("response", {}), ensure_ascii=False)})
+        else:
+            msgs.append({"role": "assistant" if c.get("role") == "model" else "user", "content": text})
     cfg = body.get("generationConfig") or {}
     out = {"messages": msgs}
+    decls = [d for t in body.get("tools") or []
+             for d in t.get("functionDeclarations") or t.get("function_declarations") or []]
+    if decls:
+        empty = {"type": "object", "properties": {}}
+        out["tools"] = [{"type": "function", "function": {"name": d["name"], "description": d.get("description", ""),
+                                                          "parameters": _lower_types(d.get("parameters") or empty)}}
+                        for d in decls]
+        mode = ((body.get("toolConfig") or {}).get("functionCallingConfig") or {}).get("mode")
+        if mode in GEMINI_CHOICE:
+            out["tool_choice"] = GEMINI_CHOICE[mode]
     for src, dst in (("temperature", "temperature"), ("topP", "top_p"), ("maxOutputTokens", "max_tokens")):
         if src in cfg:
             out[dst] = cfg[src]
     return out
 
 
-def openai_to_gemini(text: str, finish: str | None = None, usage: dict | None = None) -> dict:
-    cand = {"content": {"role": "model", "parts": [{"text": text}]}, "index": 0}
+def openai_to_gemini(text: str, finish: str | None = None, usage: dict | None = None,
+                     tool_calls: list | None = None) -> dict:
+    parts = ([{"text": text}] if text or not tool_calls else []) + \
+            [{"functionCall": {"name": c["function"]["name"], "args": _args_obj(c["function"].get("arguments"))}}
+             for c in tool_calls or []]
+    cand = {"content": {"role": "model", "parts": parts}, "index": 0}
     if finish:
-        cand["finishReason"] = {"stop": "STOP", "length": "MAX_TOKENS"}.get(finish, "STOP")
+        cand["finishReason"] = {"stop": "STOP", "length": "MAX_TOKENS", "tool_calls": "STOP"}.get(finish, "STOP")
     d = {"candidates": [cand]}
     if usage:
         d["usageMetadata"] = {"promptTokenCount": usage.get("prompt_tokens", 0),
@@ -104,10 +223,30 @@ IDLE_PAGE = ("<!doctype html><meta charset=utf-8><title>localllm</title><p style
              f"localllm: {IDLE_NOTE}. Send a message from your app or <code>localllm chat</code>, then reload.</p>")
 
 
+class ToolCalls:
+    """Collects streamed OpenAI tool-call deltas (an index, then name and argument fragments) into whole calls."""
+
+    def __init__(self):
+        self.by_index: dict[int, dict] = {}
+
+    def add(self, delta: dict) -> None:
+        for d in delta.get("tool_calls") or []:
+            c = self.by_index.setdefault(d.get("index", len(self.by_index)),
+                                         {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+            c["id"] = d.get("id") or c["id"]
+            f = d.get("function") or {}
+            c["function"]["name"] += f.get("name") or ""
+            c["function"]["arguments"] += f.get("arguments") or ""
+
+    def calls(self) -> list[dict]:
+        return [self.by_index[i] for i in sorted(self.by_index)]
+
+
 # ---- HTTP server ------------------------------------------------------------------------------------------------------
 
-def make_handler(upstream, model_name: str):
-    """`upstream` is a llama-server URL, or a pool.Pool that picks (and lazy-loads) a model per request."""
+def make_handler(upstream, model_name: str, api_key: str | None = None, trust_loopback: bool = True):
+    """`upstream` is a llama-server URL, or a pool.Pool that picks (and lazy-loads) a model per request.
+    With `api_key`, every request from another machine must carry it (loopback clients too unless trust_loopback)."""
     def local(body: dict, stay: bool = False):
         return nullcontext((upstream, None)) if isinstance(upstream, str) else upstream.use(body, stay=stay)
 
@@ -127,6 +266,20 @@ def make_handler(upstream, model_name: str):
         def _stay(self) -> bool:
             """X-Localllm-Stay: 1 keeps the loaded model for this request (no swap)."""
             return (self.headers.get("X-Localllm-Stay") or "").strip().lower() in ("1", "true", "yes")
+
+        def _authorized(self) -> bool:
+            """Strip ?key= from the path; check the key when one is required."""
+            self.path, query_key = split_key(self.path)
+            if not api_key or (trust_loopback and is_loopback(self.client_address[0])):
+                return True
+            want = api_key.encode()
+            return any(hmac.compare_digest(k.encode(), want) for k in presented_keys(self.headers, query_key))
+
+        def _deny(self):
+            self.close_connection = True                        # the unread request body must not become the next request
+            self._json(401, {"error": {"type": "authentication_error", "message": "missing or wrong API key for this "
+                                       "localllm gateway (Authorization: Bearer, x-api-key or ?key=)"}},
+                       {"WWW-Authenticate": "Bearer", "Connection": "close"})
 
         def _body(self) -> dict:
             n = int(self.headers.get("Content-Length") or 0)
@@ -193,8 +346,8 @@ def make_handler(upstream, model_name: str):
             self._json(503, {"error": IDLE_NOTE}, {"Retry-After": "5"})
 
         def _send(self, method: str, target: str, body, hdrs: dict, route_hdr: str, model_hdr: str | None):
-            fwd = {k: v for k, v in self.headers.items()
-                   if k.lower() not in HOP_BY_HOP and not (hdrs and k.lower() in ("authorization", "x-api-key"))}
+            fwd = {k: v for k, v in self.headers.items()          # our own key never leaves this gateway
+                   if k.lower() not in HOP_BY_HOP and not ((hdrs or api_key) and k.lower() in KEY_HEADERS)}
             req = urllib.request.Request(target.rstrip("/") + self.path, data=body, method=method, headers={**fwd, **hdrs})
             try:
                 r = urllib.request.urlopen(req, timeout=3600)
@@ -214,6 +367,8 @@ def make_handler(upstream, model_name: str):
             self._stream_end()
 
         def do_GET(self):
+            if not self._authorized() and self.path != "/":      # the chat page is static; its API calls need the key
+                return self._deny()
             if self.path == "/v1/models" and not isinstance(upstream, str):   # the pool's names, without waking it
                 return self._json(200, {"object": "list", "data": [
                     {"id": k, "object": "model", "owned_by": "localllm"} for k in upstream.keys]})
@@ -227,6 +382,8 @@ def make_handler(upstream, model_name: str):
             self._json(404, {"error": f"not supported: {self.path}"})
 
         def do_POST(self):
+            if not self._authorized():
+                return self._deny()
             if self.path in ("/api/chat", "/api/generate"):
                 return self._ollama(self.path == "/api/chat")
             m = GEMINI.match(self.path)
@@ -245,22 +402,24 @@ def make_handler(upstream, model_name: str):
                                    {"X-Localllm-Model": model_hdr} if model_hdr else None)
 
         def _ollama_reply(self, r, chat: bool, stream: bool, extra: dict | None):
+            timings, text, tools = {}, [], ToolCalls()
             if stream:
                 self._stream_start("application/x-ndjson", extra)
-                timings = {}
-                for c in _sse_chunks(r):
-                    timings = c.get("timings", timings)
-                    text = (c.get("choices") or [{}])[0].get("delta", {}).get("content") or ""
-                    if text:
-                        self._chunk((json.dumps(openai_to_ollama(text, model_name, chat, False), ensure_ascii=False)
-                                     + "\n").encode())
-                self._chunk((json.dumps(openai_to_ollama("", model_name, chat, True, timings)) + "\n").encode())
-                return self._stream_end()
-            text, timings = [], {}
             for c in _sse_chunks(r):
                 timings = c.get("timings", timings)
-                text.append((c.get("choices") or [{}])[0].get("delta", {}).get("content") or "")
-            self._json(200, openai_to_ollama("".join(text), model_name, chat, True, timings), extra)
+                delta = (c.get("choices") or [{}])[0].get("delta", {})
+                tools.add(delta)
+                piece = delta.get("content") or ""
+                if stream and piece:
+                    self._chunk((json.dumps(openai_to_ollama(piece, model_name, chat, False), ensure_ascii=False)
+                                 + "\n").encode())
+                text.append(piece)
+            calls = tools.calls()
+            if stream:                                  # tool calls go out whole, in the final chunk, as Ollama does
+                self._chunk((json.dumps(openai_to_ollama("", model_name, chat, True, timings, calls),
+                                        ensure_ascii=False) + "\n").encode())
+                return self._stream_end()
+            self._json(200, openai_to_ollama("".join(text), model_name, chat, True, timings, calls), extra)
 
         def _gemini(self, stream: bool):
             req = gemini_to_openai(self._body())
@@ -272,21 +431,45 @@ def make_handler(upstream, model_name: str):
                 r = json.load(_post(url + "/v1/chat/completions", {**req, "stream": False}))
                 ch = r["choices"][0]
                 return self._json(200, openai_to_gemini(ch["message"].get("content") or "", ch.get("finish_reason"),
-                                                        r.get("usage")), extra)
+                                                        r.get("usage"), ch["message"].get("tool_calls")), extra)
             r = _post(url + "/v1/chat/completions", {**req, "stream": True})
             self._stream_start("text/event-stream", extra)
+            tools = ToolCalls()
             for c in _sse_chunks(r):
                 ch = (c.get("choices") or [{}])[0]
+                tools.add(ch.get("delta", {}))
                 text = ch.get("delta", {}).get("content") or ""
-                if text or ch.get("finish_reason"):
-                    self._chunk(f"data: {json.dumps(openai_to_gemini(text, ch.get('finish_reason')), ensure_ascii=False)}\r\n\r\n"
-                                .encode())
+                finish = ch.get("finish_reason")
+                calls = tools.calls() if finish else None   # a function call is sent once it is complete
+                if text or finish:
+                    out = openai_to_gemini(text, finish, None, calls)
+                    self._chunk(f"data: {json.dumps(out, ensure_ascii=False)}\r\n\r\n".encode())
             self._stream_end()
 
     return Handler
 
 
-def serve(upstream, host: str = "127.0.0.1", port: int = 8080, model_name: str = "local") -> ThreadingHTTPServer:
-    srv = ThreadingHTTPServer((host, port), make_handler(upstream, model_name))
+class _Server(ThreadingHTTPServer):
+    """IPv4 or IPv6 by the address; `::` also takes IPv4 clients (dual stack) where the OS allows it."""
+    def __init__(self, addr, handler):
+        if ":" in addr[0]:
+            self.address_family = socket.AF_INET6
+        super().__init__(addr, handler)
+
+    def server_bind(self):
+        if self.address_family == socket.AF_INET6 and self.server_address[0] == "::":
+            try:
+                self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+            except (AttributeError, OSError):
+                pass
+        super().server_bind()
+
+
+def serve(upstream, host: str = "127.0.0.1", port: int = 8080, model_name: str = "local", api_key: str | None = None,
+          trust_loopback: bool = True) -> ThreadingHTTPServer:
+    if not api_key and (not is_loopback(host) or not trust_loopback):
+        raise ValueError(f"refusing to listen on {host} without an API key: anyone on the network could use this PC"
+                         if not is_loopback(host) else "a key is required for local clients but none was given")
+    srv = _Server((host, port), make_handler(upstream, model_name, api_key, trust_loopback))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv

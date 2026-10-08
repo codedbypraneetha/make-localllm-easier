@@ -60,7 +60,7 @@ winner on RDNA4 differs between decode and prefill.
 - [x] `localllm tune`: measure candidate settings with real llama-server runs, keep only >= 1.1x wins, cache per GPU +
       model + llama.cpp build (#8). Multi-backend sweep waits for a machine with more than one backend
 - [x] Detect a small host-visible heap (Resizable BAR off) and set the Vulkan fix automatically, confirmed by A/B
-- [ ] `GGML_CUDA_GRAPH_OPT=1` on single-GPU NVIDIA - implemented in `tune`, needs an NVIDIA owner to measure (#22)
+- [ ] `GGML_CUDA_GRAPH_OPT=1` on single-GPU NVIDIA - implemented in `tune`, needs an NVIDIA owner to measure (#19)
 - [x] MTP only where it measures faster: A/B draft length 2/3/5 per GPU, keep it on above 1.1x
 - [ ] Pick the backend by workload: prefill-heavy (documents/RAG) vs decode-heavy (chat)
 - [x] DeltaNet recurrent-state copy overhead: it was the host-visible memory, fixed by the small-BAR fix (state ops 8.2 -> 0.9 ms per token) (#9)
@@ -82,8 +82,11 @@ result at 3.5 bpw. Below ~3 bits the weights are effectively restructured, so ca
       (result: helps only when re-quantizing from Q8; built from BF16 it lost to Unsloth's UD-IQ2_S in 3 of 4 languages)
 - [ ] Better 2-bit formats on the multilingual set: IQ2_KT / IQ2_KL (ik_llama.cpp) and EXL3 ~2.5 bpw
 - [ ] LoRA self-distillation of a 2-bit 27B from its Q8 teacher (no one has measured this per language yet)
-- [ ] Vocabulary trimming per language for GGUF (no tool exists): smaller embedding/output and faster output layer,
-      most useful on 1-4B models
+- [ ] Vocabulary trimming per language for GGUF (no tool existed): smaller embedding/output and faster output layer,
+      most useful on 1-4B models. `tools/trim_vocab.py` done (#27, #36): Thai + English keeps 60-70% of the
+      vocabulary with identical tokenization and the same top-1 next token at 100% of positions on Qwen3-0.6B,
+      Qwen3.5-2B and Gemma 4 E2B; files 8-22% smaller, decode +8-12% on CPU. Next: GPU speed/VRAM and benchmark
+      accuracy on the catalog models, then a `localllm` option
 - [ ] Publish every measured quant with its per-language scores on Hugging Face
 
 ## 0.6 - smart router: the right local model for each message (Laya-style)

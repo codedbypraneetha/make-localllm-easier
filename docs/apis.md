@@ -34,6 +34,25 @@ curl http://127.0.0.1:8080/v1beta/models/local:generateContent -H "Content-Type:
   -d "{\"contents\":[{\"parts\":[{\"text\":\"Hello\"}]}]}"
 ```
 
+## Tool / function calling
+
+All four APIs pass tools through: OpenAI `tools` / `tool_calls`, Anthropic `tools` / `tool_use`, Ollama `tools` /
+`message.tool_calls` (arguments as an object) and Gemini `functionDeclarations` / `functionCall` / `functionResponse`
+(with `toolConfig` mapped to `tool_choice`). Streaming works too: Ollama gets the calls in the final chunk, Gemini when
+the model finishes the turn. The model needs a chat template that knows tools; current llama-server builds use the GGUF's
+own Jinja template by default.
+
+Checked end to end in CI (`.github/workflows/tools.yml`, `tools/tool_check.py`): call a `get_weather` tool, send the
+result back, get the final answer - every API, with and without streaming:
+
+| Model (Q8_0) | OpenAI | Anthropic | Ollama | Gemini |
+|---|---|---|---|---|
+| Qwen3-0.6B | ok / ok | ok / ok | ok / ok | ok / ok |
+| Qwen3.5-2B | ok / ok | ok / ok | ok / ok | ok / ok |
+| Gemma 4 E2B | ok / ok | ok / ok | ok / ok | ok / ok |
+
+(json / stream). Try your own model: `python tools/tool_check.py --llama http://127.0.0.1:8081 --name MODEL`.
+
 ## Mixing in your own cloud keys (optional, off by default)
 
 Everything stays on your PC unless you create `~/.localllm/route.json` with `"enabled": true` and put a key in an
@@ -63,3 +82,38 @@ config when you set them.
   "local_model": "qwen3.8-27b-q3"
 }
 ```
+
+## Use it from another device on your network (LAN mode)
+
+Run the model on the desktop with the GPU and use it from a laptop or phone on the same network:
+
+```
+localllm serve --host 0.0.0.0                  # prints the LAN address and a new API key, once
+localllm serve --host 0.0.0.0 --api-key KEY    # or bring your own key (or set LOCALLLM_API_KEY)
+localllm serve --host ::                       # IPv6 too (and IPv4 where the OS allows dual stack)
+```
+
+Other devices send the key the way their SDK already does:
+
+| API | How the key is sent |
+|---|---|
+| OpenAI | `api_key="KEY"` (sent as `Authorization: Bearer KEY`) |
+| Anthropic | `api_key="KEY"` (sent as `x-api-key: KEY`) |
+| Ollama | `Authorization: Bearer KEY` header (e.g. `ollama.Client(host=..., headers={"Authorization": "Bearer KEY"})`) |
+| Gemini | `x-goog-api-key: KEY` header, or `?key=KEY` on the URL |
+
+Requests without the right key get `401`. Requests from the desktop itself need no key, so local apps, `localllm chat`
+and the browser page keep working. On another device the chat page loads without the key, but its requests need it:
+enter the key in the page's settings (API key).
+
+Security notes:
+- `localllm` refuses to listen on a network address without a key. Keep the key secret: anyone who has it can use your
+  GPU, and through your cloud key too if you turned cloud routing on.
+- The key is checked in constant time and stripped before anything is forwarded, so it never reaches llama-server or a
+  cloud provider. llama-server itself still listens only on `127.0.0.1`.
+- Behind a reverse proxy or tunnel on the same PC (nginx, Caddy, cloudflared, ngrok), every request reaches localllm
+  from `127.0.0.1`, so "no key from this PC" would let the whole proxy through without one. Start it with
+  `--require-key-local` there: then every client, this PC included, must send the key.
+- Traffic is plain HTTP. Use it on a network you trust (home Wi-Fi), or put it behind a VPN such as WireGuard or
+  Tailscale. Don't forward the port to the internet.
+- `?key=` ends up in browser history and proxy logs; prefer the header when you can.
