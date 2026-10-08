@@ -34,6 +34,25 @@ curl http://127.0.0.1:8080/v1beta/models/local:generateContent -H "Content-Type:
   -d "{\"contents\":[{\"parts\":[{\"text\":\"Hello\"}]}]}"
 ```
 
+## Tool / function calling
+
+All four APIs pass tools through: OpenAI `tools` / `tool_calls`, Anthropic `tools` / `tool_use`, Ollama `tools` /
+`message.tool_calls` (arguments as an object) and Gemini `functionDeclarations` / `functionCall` / `functionResponse`
+(with `toolConfig` mapped to `tool_choice`). Streaming works too: Ollama gets the calls in the final chunk, Gemini when
+the model finishes the turn. The model needs a chat template that knows tools; current llama-server builds use the GGUF's
+own Jinja template by default.
+
+Checked end to end in CI (`.github/workflows/tools.yml`, `tools/tool_check.py`): call a `get_weather` tool, send the
+result back, get the final answer - every API, with and without streaming:
+
+| Model (Q8_0) | OpenAI | Anthropic | Ollama | Gemini |
+|---|---|---|---|---|
+| Qwen3-0.6B | ok / ok | ok / ok | ok / ok | ok / ok |
+| Qwen3.5-2B | ok / ok | ok / ok | ok / ok | ok / ok |
+| Gemma 4 E2B | ok / ok | ok / ok | ok / ok | ok / ok |
+
+(json / stream). Try your own model: `python tools/tool_check.py --llama http://127.0.0.1:8081 --name MODEL`.
+
 ## Mixing in your own cloud keys (optional, off by default)
 
 Everything stays on your PC unless you create `~/.localllm/route.json` with `"enabled": true` and put a key in an
