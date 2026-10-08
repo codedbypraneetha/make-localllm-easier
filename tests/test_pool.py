@@ -1,4 +1,6 @@
 import json
+import urllib.error
+import urllib.request
 
 from localllm import pool, router
 from test_gateway import _gw, _post, _up
@@ -120,3 +122,111 @@ def test_pool_prefetches_the_model_that_is_not_loaded(tmp_path, monkeypatch):
         _t.sleep(0.02)
     assert p.prefetched == ["q.gguf"]                                         # gemma loaded -> warm Qwen's file
     p.close()
+
+
+def _wait(cond, timeout=5.0):
+    import time
+    end = time.time() + timeout
+    while time.time() < end and not cond():
+        time.sleep(0.02)
+    return cond()
+
+
+def test_idle_unload_frees_the_gpu_and_the_next_message_loads_again(monkeypatch):
+    monkeypatch.setattr(router, "load_config", lambda: {"enabled": False})
+    launched, procs = [], []
+
+    def launch(key):
+        launched.append(key)
+        s, url = _up()
+        procs.append(FakeProc(s))
+        return procs[-1], url
+
+    p = pool.Pool([Q, G], launch, 15.9, first=G, idle_unload_s=0.2)
+    g, gurl = _gw(p)
+    try:
+        assert _wait(lambda: p.unloads == 1) and p.url is None and p.proc is None      # idle: nothing loaded
+        r = _post(gurl + "/v1/chat/completions", {"messages": [{"role": "user", "content": ZH}]})
+        hdr = r.headers["X-Localllm-Model"]
+        assert hdr.startswith(Q) and "loaded after idle" in hdr and "swapped" not in hdr   # best model, no swap cost
+        assert launched == [G, Q] and len(p.swaps) == 1
+        assert _wait(lambda: p.unloads == 2)
+        assert json.load(urllib.request.urlopen(gurl + "/health", timeout=10)) == {"status": "ok", "model": "unloaded"}
+        ids = [m["id"] for m in json.load(urllib.request.urlopen(gurl + "/v1/models", timeout=10))["data"]]
+        page = urllib.request.urlopen(gurl + "/", timeout=10).read().decode()
+        try:
+            urllib.request.urlopen(gurl + "/props", timeout=10)
+            raise AssertionError("/props should not wake the model")
+        except urllib.error.HTTPError as e:
+            assert e.code == 503
+        assert ids == [Q, G] and "unloaded while idle" in page and launched == [G, Q]    # no GET loaded anything
+        _post(gurl + "/v1/chat/completions", {"messages": [{"role": "user", "content": ZH}]})
+        assert launched == [G, Q, Q]                                                       # a message does
+    finally:
+        p.close(); g.shutdown()
+
+
+def test_polling_gets_do_not_keep_the_model_loaded(monkeypatch):
+    import time
+    monkeypatch.setattr(router, "load_config", lambda: {"enabled": False})
+    launched = []
+
+    def launch(key):
+        launched.append(key)
+        s, url = _up()
+        return FakeProc(s), url
+
+    p = pool.Pool([Q, G], launch, 15.9, first=G, idle_unload_s=0.3)
+    g, gurl = _gw(p)
+    try:
+        end = time.time() + 1.5
+        while time.time() < end and not p.unloads:     # a dashboard polling every 50 ms while the model is loaded
+            urllib.request.urlopen(gurl + "/health", timeout=10).read()
+            urllib.request.urlopen(gurl + "/v1/models", timeout=10).read()
+            time.sleep(0.05)
+        assert p.unloads == 1 and launched == [G]
+    finally:
+        p.close(); g.shutdown()
+
+
+def test_resident_pool_unloads_and_reloads_every_model(monkeypatch):
+    monkeypatch.setattr(router, "load_config", lambda: {"enabled": False})
+    launched = []
+
+    def launch(key):
+        launched.append(key)
+        s, url = _up()
+        return FakeProc(s), url
+
+    p = pool.Pool([Q, G], launch, 32.0, first=G, resident=True, idle_unload_s=0.2)
+    g, gurl = _gw(p)
+    try:
+        assert _wait(lambda: p.unloads == 1) and not p.loaded
+        r = _post(gurl + "/v1/chat/completions", {"messages": [{"role": "user", "content": ZH}]})
+        assert r.headers["X-Localllm-Model"].startswith(Q) and "loaded after idle" in r.headers["X-Localllm-Model"]
+        assert sorted(launched) == sorted([Q, G, Q, G]) and set(p.loaded) == {Q, G}
+    finally:
+        p.close(); g.shutdown()
+
+
+def test_stay_keeps_the_loaded_model(monkeypatch):
+    monkeypatch.setattr(router, "load_config", lambda: {"enabled": False})
+    launched = []
+
+    def launch(key):
+        launched.append(key)
+        s, url = _up()
+        return FakeProc(s), url
+
+    p = pool.Pool([Q, G], launch, 15.9, first=G, idle_unload_s=0)
+    g, gurl = _gw(p)
+    try:
+        req = urllib.request.Request(gurl + "/v1/chat/completions", headers={"Content-Type": "application/json",
+                                                                             "X-Localllm-Stay": "1"},
+                                     data=json.dumps({"messages": [{"role": "user", "content": ZH}]}).encode())
+        hdr = urllib.request.urlopen(req, timeout=30).headers["X-Localllm-Model"]
+        assert hdr.startswith(G) and "stayed as asked" in hdr and Q in hdr and launched == [G]   # no swap
+        r = _post(gurl + "/v1/chat/completions", {"messages": [{"role": "user", "content": ZH}]})
+        assert r.headers["X-Localllm-Model"].startswith(Q) and launched == [G, Q]          # without it: switches
+    finally:
+        p.close(); g.shutdown()
