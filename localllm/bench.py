@@ -13,6 +13,11 @@ Task suites (opt-in with --suites, they generate text so they are slower):
             reasons in text (thinking off) and the final number is compared exactly
   translate FLORES-101 devtest (Goyal et al. 2021, CC-BY-SA-4.0): the same sentences in 101 languages; the first 100
             are translated English -> language and language -> English, scored with chrF++ (0-100, higher is better)
+  code      CRUXEval-O (Gu et al. 2024, MIT): 800 short Python functions; the model predicts what f(input) returns.
+            Nothing the model writes is executed: the answer is parsed with ast.literal_eval and compared to the
+            recorded output. English only (code is the language).
+  codegen   HumanEval+ and MBPP+ (EvalPlus, Apache-2.0): 542 tasks; the model writes the function and the extended
+            tests run inside a locked-down Docker container (see sandbox.py) - never on your PC. Needs Docker.
 """
 from __future__ import annotations
 
@@ -50,7 +55,11 @@ FLORES = {"af": "afr", "am": "amh", "ar": "ara", "bg": "bul", "bn": "ben", "ca":
           "th": "tha", "tl": "tgl", "tr": "tur", "uk": "ukr", "ur": "urd", "uz": "uzb", "vi": "vie", "yo": "yor",
           "zh": "zho_simpl", "zu": "zul"}
 TRANSLATE_N = 100
-SUITES = ("global", "regional", "math", "translate")
+CODE_SYSTEM = ("You are given a Python function and an input. Work out what the function returns, briefly, then give the "
+               "exact return value as a Python literal on a last line of the form [ANSWER] value [/ANSWER].")
+CODEGEN_SYSTEM = ("Write a correct, self-contained Python solution. Reply with one ```python code block containing the "
+                  "complete function (with any imports it needs) and nothing else.")
+SUITES = ("global", "regional", "math", "translate", "code", "codegen")
 
 
 def system_language() -> str:
@@ -66,7 +75,7 @@ def system_language() -> str:
 
 def available(lang: str, suites: tuple[str, ...] = ("global", "regional")) -> list[str]:
     have = {"global": lang in GLOBAL_LANGS, "regional": lang in INCLUDE or lang == "th", "math": lang in MGSM_LANGS,
-            "translate": lang in FLORES and lang != "en"}
+            "translate": lang in FLORES and lang != "en", "code": lang == "en", "codegen": lang == "en"}
     return [s for s in suites if have[s]]
 
 
@@ -104,6 +113,17 @@ def load(suite: str, lang: str) -> list[dict]:
         xx = [r["sentence"] for r in _rows("gsarti/flores_101", FLORES[lang], "devtest")[:TRANSLATE_N]]
         items = [{"src": a, "ref": b, "to": lang} for a, b in zip(en, xx)] + \
                 [{"src": b, "ref": a, "to": "en"} for a, b in zip(en, xx)]
+    elif suite == "codegen" and lang == "en":
+        for r in _rows("evalplus/humanevalplus", "default"):
+            items.append({"id": r["task_id"], "prompt": r["prompt"], "head": r["prompt"],
+                          "test": f"{r['test']}\n\ncheck({r['entry_point']})\n"})
+        for r in _rows("evalplus/mbppplus", "default"):
+            tests = r["test_list"] if isinstance(r["test_list"], list) else ast.literal_eval(r["test_list"])
+            items.append({"id": f"Mbpp/{r['task_id']}", "prompt": f"{r['prompt']}\nYour code should pass this test:\n"
+                          f"{tests[0]}", "head": "", "test": r["test"]})
+    elif suite == "code" and lang == "en":
+        for r in _rows("cruxeval-org/cruxeval", "default"):
+            items.append({"code": r["code"], "input": r["input"], "ans": r["output"]})
     elif suite == "math" and lang in MGSM_LANGS:
         for r in _rows("juletxara/mgsm", lang):
             items.append({"q": r["question"], "ans": int(r["answer_number"])})
@@ -216,6 +236,56 @@ def ask_translate(url: str, item: dict) -> float:
     return chrf(text.strip(), item["ref"])
 
 
+def same_value(pred: str, gold: str) -> bool:
+    """Compare two Python literals by value (never executes anything), falling back to normalised text."""
+    import ast
+    try:
+        return ast.literal_eval(pred) == ast.literal_eval(gold)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return " ".join(pred.split()) == " ".join(gold.split())
+
+
+def code_answer(text: str) -> str | None:
+    """The literal inside the last [ANSWER] ... [/ANSWER] (closing tag optional), without code fences."""
+    if "[ANSWER]" not in text:
+        return None
+    ans = text.rsplit("[ANSWER]", 1)[1].split("[/ANSWER]", 1)[0].strip().strip("`").strip()
+    return ans[6:].strip() if ans.startswith("python") else ans
+
+
+def ask_code(url: str, item: dict) -> bool:
+    user = f"```python\n{item['code']}\n```\n\nWhat does f({item['input']}) return?"
+    body = {"messages": [{"role": "system", "content": CODE_SYSTEM}, {"role": "user", "content": user}],
+            "max_tokens": 700, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}}
+    req = urllib.request.Request(url.rstrip("/") + "/v1/chat/completions", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    text = json.load(urllib.request.urlopen(req, timeout=600))["choices"][0]["message"].get("content") or ""
+    ans = code_answer(text)
+    return ans is not None and same_value(ans, item["ans"])
+
+
+def code_block(text: str) -> str:
+    """The first ```python block of a reply (or the whole reply when there is no fence)."""
+    import re
+    m = re.search(r"```(?:python|py)?\s*\n(.*?)```", text, re.S)
+    return (m.group(1) if m else text).strip("\n")
+
+
+def codegen_program(item: dict, reply: str) -> str:
+    """Model code + the benchmark's tests. HumanEval prompts carry imports the model may not repeat, so they go first."""
+    head = item["head"]
+    prelude = "\n".join(l for l in head.splitlines() if l.startswith(("import ", "from "))) if head else ""
+    return f"{prelude}\n{code_block(reply)}\n\n{item['test']}"
+
+
+def ask_codegen(url: str, item: dict) -> str:
+    body = {"messages": [{"role": "system", "content": CODEGEN_SYSTEM}, {"role": "user", "content": item["prompt"]}],
+            "max_tokens": 1200, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}}
+    req = urllib.request.Request(url.rstrip("/") + "/v1/chat/completions", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    return json.load(urllib.request.urlopen(req, timeout=600))["choices"][0]["message"].get("content") or ""
+
+
 def _save(name: str, res: dict) -> None:
     out = HOME / "results.json"
     allres = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
@@ -241,7 +311,24 @@ def run(url: str, name: str, langs: list[str], limit: int = 0, suites: tuple[str
                 print(f"  {lang:3} {suite:9} chrF++ {acc:5.1f}  (en<->{lang}, {len(items)} sentences)", flush=True)
                 _save(name, {**res, "_meta": {"model": name, "seconds": round(time.time() - t0), "limit": limit}})
                 continue
-            ok = sum(ask_math(url, it) if suite == "math" else ask(url, it) == it["ans"] for it in items)
+            if suite == "codegen":            # write everything first, then run the tests in the Docker sandbox
+                from . import sandbox
+                gen = HOME / "bench" / f"codegen-out-{name}-{len(items)}.json"   # generations are reusable
+                programs = json.loads(gen.read_text(encoding="utf-8")) if gen.exists() else \
+                    [codegen_program(it, ask_codegen(url, it)) for it in items]
+                gen.write_text(json.dumps(programs), encoding="utf-8")
+                if not sandbox.docker():
+                    print(f"  {lang:3} {suite:9} generated {len(programs)} programs; start Docker and rerun to test them "
+                          f"(saved in {gen})", flush=True)
+                    continue
+                ok = sum(r["ok"] for r in sandbox.run(programs))
+                acc = round(100 * ok / len(items), 1)
+                res[f"{lang}/{suite}"] = {"acc": acc, "correct": ok, "n": len(items)}
+                print(f"  {lang:3} {suite:9} {acc:5.1f}%  ({ok}/{len(items)} pass the EvalPlus tests)", flush=True)
+                _save(name, {**res, "_meta": {"model": name, "seconds": round(time.time() - t0), "limit": limit}})
+                continue
+            check = {"math": ask_math, "code": ask_code}.get(suite)
+            ok = sum(check(url, it) if check else ask(url, it) == it["ans"] for it in items)
             acc = round(100 * ok / len(items), 1)
             res[f"{lang}/{suite}"] = {"acc": acc, "correct": ok, "n": len(items)}
             margin = round(196 * (acc / 100 * (1 - acc / 100) / len(items)) ** 0.5, 1)

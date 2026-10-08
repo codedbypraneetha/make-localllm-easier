@@ -272,7 +272,9 @@ def cmd_doctor(_a) -> None:
         acc = m["scores"][test]
         tl, suite = test.split("/")
         kind = {"global": "translated world-knowledge exam", "math": "grade-school math word problems",
-                "translate": "translation to/from English"}.get(
+                "translate": "translation to/from English",
+                "code": "predicting what Python code returns",
+                "codegen": "writing code that passes tests"}.get(
             suite, "real local school/licence exams")
         mark = "  <- your language" if tl == lang else ""
         unit = "chrF++ (0-100)" if suite == "translate" else "% correct"
@@ -347,7 +349,7 @@ def main() -> None:
     e.add_argument("--name", default="model"); e.add_argument("--limit", type=int, default=0)
     e.add_argument("--langs", help="comma-separated ISO codes, default: en + this PC's language")
     e.add_argument("--suites", default="global,regional",
-                   help="global,regional (knowledge), math (MGSM), translate (FLORES, chrF++)")
+                   help="global,regional (knowledge), math (MGSM), translate (FLORES, chrF++), code (CRUXEval), codegen (EvalPlus, needs Docker)")
     e.set_defaults(fn=cmd_eval)
     a = ap.parse_args()
     if a.fn is cmd_serve:

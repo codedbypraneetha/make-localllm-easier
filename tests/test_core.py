@@ -182,3 +182,26 @@ def test_chrf_matches_sacrebleu():
     assert bench.chrf('(hello) "world", ok!', "hello world ok") == 38.43
     assert bench.chrf("same", "same") == 100.0 and bench.chrf("", "x") == 0.0
     assert bench.available("th", ("translate",)) == ["translate"] and bench.available("en", ("translate",)) == []
+
+
+def test_code_answers_are_compared_by_value_without_running_them():
+    from localllm import bench
+    assert bench.code_answer("so it returns 4\n[ANSWER] [(4, 1), (2, 3)] [/ANSWER]") == "[(4, 1), (2, 3)]"
+    assert bench.code_answer("[ANSWER]\n```python\n{1: None}\n```\n[/ANSWER]") == "{1: None}"
+    assert bench.code_answer("no tag") is None
+    assert bench.same_value("[(4,1),(2,3)]", "[(4, 1), (2, 3)]") and bench.same_value("'abc'", '"abc"')
+    assert not bench.same_value("[1, 2]", "[2, 1]")
+    assert not bench.same_value("__import__('os').system('echo hi')", "0")     # parsed as text, never run
+    assert bench.available("en", ("code",)) == ["code"] and bench.available("th", ("code",)) == []
+
+
+def test_codegen_program_assembly_and_sandbox_flags():
+    from localllm import bench, sandbox
+    reply = "Sure:\n```python\ndef add(a, b):\n    return a + b\n```\nDone."
+    item = {"head": "from typing import List\n\ndef add(a, b):\n    ...", "test": "def check(c):\n    assert c(1, 2) == 3\n\ncheck(add)\n"}
+    prog = bench.codegen_program(item, reply)
+    assert prog.startswith("from typing import List\n") and "return a + b" in prog and prog.endswith("check(add)\n")
+    cmd = sandbox.command("docker", "/w", 10)
+    for flag in ("--network", "none", "--read-only", "ALL", "no-new-privileges", "--pids-limit", "/w:/work:ro"):
+        assert flag in cmd
+    assert cmd[cmd.index("--user") + 1] != "0"
