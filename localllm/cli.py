@@ -88,7 +88,7 @@ class _PoolProc:
         self.gateway.shutdown()
 
 
-def _start(key: str | None, port: int, ctx: int, models: str | None = None):
+def _start(key: str | None, port: int, ctx: int, models: str | None = None, idle_min: float | None = None):
     server, _devs, dev, _ram = _machine()
     from .bench import system_language
     ram_free = runtime.ram_available_gb()
@@ -111,7 +111,8 @@ def _start(key: str | None, port: int, ctx: int, models: str | None = None):
         from . import taskclf
         clf = taskclf.Classifier(server)    # math/code/translate in any language; its server starts on the 1st message
         p = pool.Pool(keys, lambda k: _launch(k, server, dev, ctx, ram_free), dev["total_gb"], ram_free, first, resident,
-                      files=None if resident else {k: _model_path(k) for k in keys}, classifier=clf)
+                      files=None if resident else {k: _model_path(k) for k in keys}, classifier=clf,
+                      idle_unload_s=pool.IDLE_UNLOAD_S if idle_min is None else idle_min * 60)
         return _PoolProc(p, gateway.serve(p, port=port, model_name="localllm-auto")), f"http://127.0.0.1:{port}"
     key = key or (catalog.pick(dev["total_gb"], system_language(), ram_free) if dev else None)
     if not key:
@@ -160,7 +161,7 @@ def _launch(key: str, server, dev, ctx: int, ram_free: float) -> tuple[subproces
 
 
 def cmd_run(a) -> None:
-    proc, url = _start(a.model, a.port, a.ctx, getattr(a, "models", None))
+    proc, url = _start(a.model, a.port, a.ctx, getattr(a, "models", None), getattr(a, "idle_unload", None))
     _say(f"ready. chat: {url}   API: {url}/v1 (OpenAI), {url}/v1/messages (Anthropic), {url}/api (Ollama), "
          f"{url}/v1beta (Gemini)   Ctrl+C to stop")
     if not a.no_browser:
@@ -179,7 +180,7 @@ def cmd_chat(a) -> None:
         return
     if a.url:
         sys.exit(f"[localllm] nothing is answering at {a.url}")
-    proc, url = _start(a.model, a.port, a.ctx, getattr(a, "models", None))
+    proc, url = _start(a.model, a.port, a.ctx, getattr(a, "models", None), getattr(a, "idle_unload", None))
     try:
         chat.repl(url, a.model or "")
     finally:
@@ -330,6 +331,9 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--ctx", type=int, default=8192, help="context length in tokens")
     ap.add_argument("--no-browser", action="store_true")
+    idle = {"type": float, "metavar": "MIN", "help": "with --models: stop the models after MIN minutes without a "
+            "request (default 15, 0 = never); the next message loads them again"}
+    ap.add_argument("--idle-unload", **idle)
     ap.add_argument("--models", metavar="auto|A,B", help="smart routing: pick the best of these models per message, "
                     "lazy-loading one at a time (auto = every model that fits this GPU)")
     ap.set_defaults(fn=cmd_run)
@@ -341,14 +345,14 @@ def main() -> None:
     c = sub.add_parser("chat"); c.add_argument("model", nargs="?", choices=list(catalog.MODELS))
     c.add_argument("--url", help="chat with an already running OpenAI-compatible server instead")
     c.add_argument("--port", type=int, default=8080); c.add_argument("--ctx", type=int, default=8192)
-    c.add_argument("--models", metavar="auto|A,B")
+    c.add_argument("--models", metavar="auto|A,B"); c.add_argument("--idle-unload", **idle)
     c.set_defaults(fn=cmd_chat)
     r = sub.add_parser("route", help="show routing config, or --test a prompt local vs cloud")
     r.add_argument("--test", metavar="PROMPT"); r.add_argument("--port", type=int, default=8080)
     r.set_defaults(fn=cmd_route)
     s = sub.add_parser("serve"); s.add_argument("model", nargs="?", choices=list(catalog.MODELS))
     s.add_argument("--port", type=int, default=8080); s.add_argument("--ctx", type=int, default=8192)
-    s.add_argument("--models", metavar="auto|A,B")
+    s.add_argument("--models", metavar="auto|A,B"); s.add_argument("--idle-unload", **idle)
     s.set_defaults(fn=cmd_serve)
     e = sub.add_parser("eval"); e.add_argument("--url", default="http://127.0.0.1:8080")
     e.add_argument("--name", default="model"); e.add_argument("--limit", type=int, default=0)
