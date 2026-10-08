@@ -92,3 +92,31 @@ def test_translation_request_does_not_swap_for_chinese():
     zh_tr = "请把这句话翻译成英文：今天天气很好，我们去公园散步吧。"
     assert router.pick_local(zh_tr, [Q, G], G, 15.9)[0] == G      # translate: Qwen only +1.4 -> stay on gemma
     assert router.pick_local(ZH, [Q, G], G, 15.9)[0] == Q         # same language, knowledge question: +5.5 -> swap
+
+
+def test_prefetch_reads_other_models_and_respects_ram(tmp_path):
+    import threading
+    f = tmp_path / "m.gguf"
+    f.write_bytes(b"x" * (3 * pool.PREFETCH_CHUNK + 5))
+    assert pool.prefetch(f, threading.Event(), ram_free_gb=64.0)
+    assert not pool.prefetch(f, threading.Event(), ram_free_gb=1.0)          # not enough spare RAM: skip
+    stop = threading.Event(); stop.set()
+    assert not pool.prefetch(f, stop, ram_free_gb=64.0)                       # a swap started: give up
+
+
+def test_pool_prefetches_the_model_that_is_not_loaded(tmp_path, monkeypatch):
+    import time as _t
+    monkeypatch.setattr(pool, "prefetch", lambda p, stop, ram_free_gb=None: True)
+    files = {Q: tmp_path / "q.gguf", G: tmp_path / "g.gguf"}
+
+    def launch(key):
+        s, url = _up()
+        return FakeProc(s), url
+
+    p = pool.Pool([Q, G], launch, 15.9, first=G, files=files)
+    for _ in range(50):
+        if p.prefetched:
+            break
+        _t.sleep(0.02)
+    assert p.prefetched == ["q.gguf"]                                         # gemma loaded -> warm Qwen's file
+    p.close()
