@@ -1,6 +1,6 @@
 """Embed the router data with e5-small (llama.cpp), train a logistic-regression head, evaluate vs the keyword rules.
 usage: train_router.py MODEL.gguf [--ngl 0|99]"""
-import json, subprocess, sys, time, urllib.request
+import json, subprocess, sys, time, urllib.error, urllib.request
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -35,7 +35,15 @@ def embed(recs, tag):
     out = []
     t = time.time()
     for i in range(0, len(recs), 32):
-        out += post(["query: " + r["text"][:450] for r in recs[i:i + 32]])
+        batch = ["query: " + r["text"][:450] for r in recs[i:i + 32]]
+        try:
+            out += post(batch)
+        except urllib.error.HTTPError:
+            for t in batch:                     # find and shorten the text the server rejected
+                try:
+                    out += post([t])
+                except urllib.error.HTTPError:
+                    print("  shortened:", repr(t[:80])); out += post([t[:150]])
     print(f"  embedded {len(recs)} {tag} texts in {time.time() - t:.1f}s")
     x = np.array(out, dtype=np.float32)
     x /= np.linalg.norm(x, axis=1, keepdims=True)
@@ -63,7 +71,15 @@ try:
         except OSError:
             time.sleep(0.2)
     train, held, test = load("train"), load("heldout"), load("shared_test")
-    xtr, xho, xte = embed(train, "train"), embed(held, "heldout"), embed(test, "test")
+    if "--with-generated" in sys.argv:          # short everyday requests written by the local LLM
+        import random
+        gen = load("generated"); random.Random(1).shuffle(gen)
+        cut = len(gen) * 85 // 100
+        train, held = train + gen[:cut], held + gen[cut:]
+        TAG = "+gen"
+    else:
+        TAG = ""
+    xtr, xho, xte = embed(train, "train" + TAG), embed(held, "heldout" + TAG), embed(test, "test")
     ytr, yho, yte = [r["label"] for r in train], [r["label"] for r in held], [r["label"] for r in test]
 
     best = None
