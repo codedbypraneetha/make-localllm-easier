@@ -1,0 +1,71 @@
+name: tool-calling
+# Real-model check for tool / function calling through localllm's OpenAI, Anthropic, Ollama and Gemini APIs (#45).
+# Small models on a CPU runner (Hugging Face reachable here); prints one row per API and mode.
+on:
+  push:
+    paths: [localllm/gateway.py, tools/tool_check.py, .github/workflows/tools.yml]
+  workflow_dispatch:
+
+jobs:
+  real-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: qwen3-0.6b, repo: Qwen/Qwen3-0.6B-GGUF, quant: Q8_0}
+          - {name: qwen3.5-2b, repo: unsloth/Qwen3.5-2B-GGUF, quant: Q8_0}
+          - {name: gemma-4-e2b, repo: ggml-org/gemma-4-E2B-it-GGUF, quant: Q8_0}
+    name: tool-calling (${{ matrix.name }})
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LLAMA_TAG: b11487
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: llama.cpp CPU binaries (pinned release)
+        run: |
+          python - <<'EOF'
+          import io, json, os, re, tarfile, urllib.request, zipfile
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{os.environ['LLAMA_TAG']}",
+              headers={"Authorization": f"Bearer {os.environ['GH_TOKEN']}"})
+          rel = json.load(urllib.request.urlopen(req))
+          asset = next(a for a in rel["assets"] if re.search(r"bin-ubuntu-x64\.(zip|tar\.gz)$", a["name"]))
+          data = urllib.request.urlopen(asset["browser_download_url"]).read()
+          if asset["name"].endswith(".zip"):
+              zipfile.ZipFile(io.BytesIO(data)).extractall("llama")
+          else:
+              tarfile.open(fileobj=io.BytesIO(data)).extractall("llama", filter="data")
+          EOF
+          BIN=$(dirname "$(find "$PWD/llama" -name llama-server -type f | head -1)")
+          chmod +x "$BIN"/llama-*
+          echo "BIN=$BIN" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$BIN" >> "$GITHUB_ENV"
+      - name: Model
+        run: |
+          FILE=$(curl -fsSL "https://huggingface.co/api/models/${{ matrix.repo }}" | python -c "
+          import json, sys
+          files = [s['rfilename'] for s in json.load(sys.stdin)['siblings']]
+          print(next(f for f in sorted(files) if f.endswith('${{ matrix.quant }}.gguf') and 'mmproj' not in f.lower()))")
+          echo "MODEL_FILE=$FILE" >> "$GITHUB_ENV"
+          curl -fsSL -o model.gguf "https://huggingface.co/${{ matrix.repo }}/resolve/main/$FILE"
+      - name: Tool calls through all four APIs
+        run: |
+          # thinking off (--reasoning-budget 0) keeps CPU answers short; templates come from the GGUF (--jinja)
+          "$BIN/llama-server" -m model.gguf --port 8081 -c 4096 -t 4 --jinja --reasoning-budget 0 > server.log 2>&1 &
+          for i in $(seq 1 120); do curl -fs http://127.0.0.1:8081/health > /dev/null && break; sleep 1; done
+          python tools/tool_check.py --llama http://127.0.0.1:8081 --name "${{ matrix.name }}" --json tools.jsonl \
+            | tee tools.txt
+      - name: Summary
+        if: always()
+        run: |
+          { echo "## ${{ matrix.repo }} / $MODEL_FILE"; echo '```'; cat tools.txt 2>/dev/null; echo '```'
+            echo '<details><summary>llama-server log (tail)</summary>'; echo; echo '```'; tail -40 server.log; echo '```'
+            echo '</details>'; } >> "$GITHUB_STEP_SUMMARY"
