@@ -18,6 +18,8 @@ Task suites (opt-in with --suites, they generate text so they are slower):
             recorded output. English only (code is the language).
   codegen   HumanEval+ and MBPP+ (EvalPlus, Apache-2.0): 542 tasks; the model writes the function and the extended
             tests run inside a locked-down Docker container (see sandbox.py) - never on your PC. Needs Docker.
+            Two tests are repaired (CODEGEN_FIXES): HumanEval/32's check can't pass as published, and one of
+            Mbpp/255's 112 inputs needs 2.2 GB, over the sandbox's 1 GB cap.
 """
 from __future__ import annotations
 
@@ -59,6 +61,20 @@ CODE_SYSTEM = ("You are given a Python function and an input. Work out what the 
                "exact return value as a Python literal on a last line of the form [ANSWER] value [/ANSWER].")
 CODEGEN_SYSTEM = ("Write a correct, self-contained Python solution. Reply with one ```python code block containing the "
                   "complete function (with any imports it needs) and nothing else.")
+CODEGEN_TIMEOUT = 60.0      # seconds per task: EvalPlus's cap. Its slowest reference solution, Mbpp/599, takes ~20 s
+# Test repairs, task -> (regex, replacement), made when a program is assembled (so cached items and replies get them):
+# - HumanEval/32: the Hugging Face copy asserts _poly(*find_zero(xs), inp), splatting a float, so nothing could pass
+#   (the canonical solution included). Judge like EvalPlus's harness, |poly(out)| <= atol, or like every other task, by
+#   the recorded answer: on steep polynomials no float gets within 1e-4 of zero, the recorded root included.
+# - Mbpp/255: the combinations of 5 colours taken 77 at a time are 1,663,740 tuples, 1.1 GB per list, and the test
+#   holds the answer and the reference's at once (2.2 GB peak). No answer fits in the 1 GB sandbox (which must stop a
+#   2 GB allocation), so that one input of 112 is dropped; its other inputs go up to 82,160 tuples.
+CODEGEN_FIXES = {
+    "HumanEval/32": (r"assert _poly\(\*candidate\(\*inp\), inp\) <= (\S+)",
+                     r"out = candidate(*inp); assert abs(_poly(*inp, out)) <= \1 or math.isclose(out, exp, "
+                     r"rel_tol=1e-07, abs_tol=\1)"),
+    "Mbpp/255": (r"\[\['Dog', 'Cat', 'CatBird', 'Bird', 'Fish'\], 77\], ", ""),
+}
 SUITES = ("global", "regional", "math", "translate", "code", "codegen")
 
 
@@ -272,10 +288,15 @@ def code_block(text: str) -> str:
 
 
 def codegen_program(item: dict, reply: str) -> str:
-    """Model code + the benchmark's tests. HumanEval prompts carry imports the model may not repeat, so they go first."""
-    head = item["head"]
-    prelude = "\n".join(l for l in head.splitlines() if l.startswith(("import ", "from "))) if head else ""
-    return f"{prelude}\n{code_block(reply)}\n\n{item['test']}"
+    """Model code + the benchmark's tests. The whole HumanEval prompt goes first: its imports and helpers (poly() in
+    HumanEval/32, is_palindrome() in /10) are given, so a model need not repeat them, and the model's own definitions
+    come after it and win. `from __future__` lines must open the file, so they move there."""
+    import re
+    lines = code_block(reply).splitlines()
+    future = [l for l in lines if l.startswith("from __future__")]
+    code = "\n".join(l for l in lines if not l.startswith("from __future__"))
+    fix = CODEGEN_FIXES.get(item.get("id", ""))
+    return "\n".join([*future, item["head"], code, "", re.sub(*fix, item["test"]) if fix else item["test"]])
 
 
 def ask_codegen(url: str, item: dict) -> str:
@@ -313,15 +334,16 @@ def run(url: str, name: str, langs: list[str], limit: int = 0, suites: tuple[str
                 continue
             if suite == "codegen":            # write everything first, then run the tests in the Docker sandbox
                 from . import sandbox
-                gen = HOME / "bench" / f"codegen-out-{name}-{len(items)}.json"   # generations are reusable
-                programs = json.loads(gen.read_text(encoding="utf-8")) if gen.exists() else \
-                    [codegen_program(it, ask_codegen(url, it)) for it in items]
-                gen.write_text(json.dumps(programs), encoding="utf-8")
+                gen = HOME / "bench" / f"codegen-replies-{name}-{len(items)}.json"   # replies are reusable
+                replies = json.loads(gen.read_text(encoding="utf-8")) if gen.exists() else \
+                    [ask_codegen(url, it) for it in items]
+                gen.write_text(json.dumps(replies), encoding="utf-8")
+                programs = [codegen_program(it, r) for it, r in zip(items, replies)]   # assembled fresh every run
                 if not sandbox.docker():
-                    print(f"  {lang:3} {suite:9} generated {len(programs)} programs; start Docker and rerun to test them "
-                          f"(saved in {gen})", flush=True)
+                    print(f"  {lang:3} {suite:9} generated {len(programs)} programs; start Docker (Linux containers) "
+                          f"and rerun to test them (saved in {gen})", flush=True)
                     continue
-                ok = sum(r["ok"] for r in sandbox.run(programs))
+                ok = sum(r["ok"] for r in sandbox.run(programs, CODEGEN_TIMEOUT))
                 acc = round(100 * ok / len(items), 1)
                 res[f"{lang}/{suite}"] = {"acc": acc, "correct": ok, "n": len(items)}
                 print(f"  {lang:3} {suite:9} {acc:5.1f}%  ({ok}/{len(items)} pass the EvalPlus tests)", flush=True)
