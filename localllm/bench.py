@@ -13,6 +13,13 @@ Task suites (opt-in with --suites, they generate text so they are slower):
             reasons in text (thinking off) and the final number is compared exactly
   translate FLORES-101 devtest (Goyal et al. 2021, CC-BY-SA-4.0): the same sentences in 101 languages; the first 100
             are translated English -> language and language -> English, scored with chrF++ (0-100, higher is better)
+  code      CRUXEval-O (Gu et al. 2024, MIT): 800 short Python functions; the model predicts what f(input) returns.
+            Nothing the model writes is executed: the answer is parsed with ast.literal_eval and compared to the
+            recorded output. English only (code is the language).
+  codegen   HumanEval+ and MBPP+ (EvalPlus, Apache-2.0): 542 tasks; the model writes the function and the extended
+            tests run inside a locked-down Docker container (see sandbox.py) - never on your PC. Needs Docker.
+            Two tests are repaired (CODEGEN_FIXES): HumanEval/32's check can't pass as published, and one of
+            Mbpp/255's 112 inputs needs 2.2 GB, over the sandbox's 1 GB cap.
   vision    MaXM (Changpinyo et al. 2023, CC-BY-4.0; Crossmodal-3600 images): questions about photos taken in each
             language's own region, in 7 languages incl. Thai; a short answer counts when it matches a reference after
             normalising case, punctuation and spaces (or contains it, for answers phrased as a short sentence).
@@ -57,9 +64,27 @@ FLORES = {"af": "afr", "am": "amh", "ar": "ara", "bg": "bul", "bn": "ben", "ca":
           "th": "tha", "tl": "tgl", "tr": "tur", "uk": "ukr", "ur": "urd", "uz": "uzb", "vi": "vie", "yo": "yor",
           "zh": "zho_simpl", "zu": "zul"}
 TRANSLATE_N = 100
+CODE_SYSTEM = ("You are given a Python function and an input. Work out what the function returns, briefly, then give the "
+               "exact return value as a Python literal on a last line of the form [ANSWER] value [/ANSWER].")
+CODEGEN_SYSTEM = ("Write a correct, self-contained Python solution. Reply with one ```python code block containing the "
+                  "complete function (with any imports it needs) and nothing else.")
+CODEGEN_TIMEOUT = 60.0      # seconds per task: EvalPlus's cap. Its slowest reference solution, Mbpp/599, takes ~20 s
+# Test repairs, task -> (regex, replacement), made when a program is assembled (so cached items and replies get them):
+# - HumanEval/32: the Hugging Face copy asserts _poly(*find_zero(xs), inp), splatting a float, so nothing could pass
+#   (the canonical solution included). Judge like EvalPlus's harness, |poly(out)| <= atol, or like every other task, by
+#   the recorded answer: on steep polynomials no float gets within 1e-4 of zero, the recorded root included.
+# - Mbpp/255: the combinations of 5 colours taken 77 at a time are 1,663,740 tuples, 1.1 GB per list, and the test
+#   holds the answer and the reference's at once (2.2 GB peak). No answer fits in the 1 GB sandbox (which must stop a
+#   2 GB allocation), so that one input of 112 is dropped; its other inputs go up to 82,160 tuples.
+CODEGEN_FIXES = {
+    "HumanEval/32": (r"assert _poly\(\*candidate\(\*inp\), inp\) <= (\S+)",
+                     r"out = candidate(*inp); assert abs(_poly(*inp, out)) <= \1 or math.isclose(out, exp, "
+                     r"rel_tol=1e-07, abs_tol=\1)"),
+    "Mbpp/255": (r"\[\['Dog', 'Cat', 'CatBird', 'Bird', 'Fish'\], 77\], ", ""),
+}
+SUITES = ("global", "regional", "math", "translate", "code", "codegen", "vision")
 MAXM = {"en": "en", "fr": "fr", "hi": "hi", "he": "iw", "ro": "ro", "th": "th", "zh": "zh"}   # ISO -> dataset split
 VISION_SYSTEM = "Look at the image and answer the question in {lang} with one word or a short phrase. Reply with the answer only."
-SUITES = ("global", "regional", "math", "translate", "vision")
 
 
 def system_language() -> str:
@@ -75,7 +100,8 @@ def system_language() -> str:
 
 def available(lang: str, suites: tuple[str, ...] = ("global", "regional")) -> list[str]:
     have = {"global": lang in GLOBAL_LANGS, "regional": lang in INCLUDE or lang == "th", "math": lang in MGSM_LANGS,
-            "translate": lang in FLORES and lang != "en", "vision": lang in MAXM}
+            "translate": lang in FLORES and lang != "en", "code": lang == "en", "codegen": lang == "en",
+            "vision": lang in MAXM}
     return [s for s in suites if have[s]]
 
 
@@ -131,6 +157,17 @@ def load(suite: str, lang: str, limit: int = 0) -> list[dict]:
         xx = [r["sentence"] for r in _rows("gsarti/flores_101", FLORES[lang], "devtest")[:TRANSLATE_N]]
         items = [{"src": a, "ref": b, "to": lang} for a, b in zip(en, xx)] + \
                 [{"src": b, "ref": a, "to": "en"} for a, b in zip(en, xx)]
+    elif suite == "codegen" and lang == "en":
+        for r in _rows("evalplus/humanevalplus", "default"):
+            items.append({"id": r["task_id"], "prompt": r["prompt"], "head": r["prompt"],
+                          "test": f"{r['test']}\n\ncheck({r['entry_point']})\n"})
+        for r in _rows("evalplus/mbppplus", "default"):
+            tests = r["test_list"] if isinstance(r["test_list"], list) else ast.literal_eval(r["test_list"])
+            items.append({"id": f"Mbpp/{r['task_id']}", "prompt": f"{r['prompt']}\nYour code should pass this test:\n"
+                          f"{tests[0]}", "head": "", "test": r["test"]})
+    elif suite == "code" and lang == "en":
+        for r in _rows("cruxeval-org/cruxeval", "default"):
+            items.append({"code": r["code"], "input": r["input"], "ans": r["output"]})
     elif suite == "math" and lang in MGSM_LANGS:
         for r in _rows("juletxara/mgsm", lang):
             items.append({"q": r["question"], "ans": int(r["answer_number"])})
@@ -256,6 +293,61 @@ def ask_translate(url: str, item: dict) -> float:
     return chrf(text.strip(), item["ref"])
 
 
+def same_value(pred: str, gold: str) -> bool:
+    """Compare two Python literals by value (never executes anything), falling back to normalised text."""
+    import ast
+    try:
+        return ast.literal_eval(pred) == ast.literal_eval(gold)
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        return " ".join(pred.split()) == " ".join(gold.split())
+
+
+def code_answer(text: str) -> str | None:
+    """The literal inside the last [ANSWER] ... [/ANSWER] (closing tag optional), without code fences."""
+    if "[ANSWER]" not in text:
+        return None
+    ans = text.rsplit("[ANSWER]", 1)[1].split("[/ANSWER]", 1)[0].strip().strip("`").strip()
+    return ans[6:].strip() if ans.startswith("python") else ans
+
+
+def ask_code(url: str, item: dict) -> bool:
+    user = f"```python\n{item['code']}\n```\n\nWhat does f({item['input']}) return?"
+    body = {"messages": [{"role": "system", "content": CODE_SYSTEM}, {"role": "user", "content": user}],
+            "max_tokens": 700, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}}
+    req = urllib.request.Request(url.rstrip("/") + "/v1/chat/completions", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    text = json.load(urllib.request.urlopen(req, timeout=600))["choices"][0]["message"].get("content") or ""
+    ans = code_answer(text)
+    return ans is not None and same_value(ans, item["ans"])
+
+
+def code_block(text: str) -> str:
+    """The first ```python block of a reply (or the whole reply when there is no fence)."""
+    import re
+    m = re.search(r"```(?:python|py)?\s*\n(.*?)```", text, re.S)
+    return (m.group(1) if m else text).strip("\n")
+
+
+def codegen_program(item: dict, reply: str) -> str:
+    """Model code + the benchmark's tests. The whole HumanEval prompt goes first: its imports and helpers (poly() in
+    HumanEval/32, is_palindrome() in /10) are given, so a model need not repeat them, and the model's own definitions
+    come after it and win. `from __future__` lines must open the file, so they move there."""
+    import re
+    lines = code_block(reply).splitlines()
+    future = [l for l in lines if l.startswith("from __future__")]
+    code = "\n".join(l for l in lines if not l.startswith("from __future__"))
+    fix = CODEGEN_FIXES.get(item.get("id", ""))
+    return "\n".join([*future, item["head"], code, "", re.sub(*fix, item["test"]) if fix else item["test"]])
+
+
+def ask_codegen(url: str, item: dict) -> str:
+    body = {"messages": [{"role": "system", "content": CODEGEN_SYSTEM}, {"role": "user", "content": item["prompt"]}],
+            "max_tokens": 1200, "temperature": 0, "chat_template_kwargs": {"enable_thinking": False}}
+    req = urllib.request.Request(url.rstrip("/") + "/v1/chat/completions", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    return json.load(urllib.request.urlopen(req, timeout=600))["choices"][0]["message"].get("content") or ""
+
+
 def _norm(text: str) -> str:
     text = "".join(" " if unicodedata.category(ch)[0] in "PS" else ch for ch in unicodedata.normalize("NFKC", text))
     return " ".join(text.lower().split())
@@ -310,7 +402,24 @@ def run(url: str, name: str, langs: list[str], limit: int = 0, suites: tuple[str
                 print(f"  {lang:3} {suite:9} chrF++ {acc:5.1f}  (en<->{lang}, {len(items)} sentences)", flush=True)
                 _save(name, {**res, "_meta": {"model": name, "seconds": round(time.time() - t0), "limit": limit}})
                 continue
-            check = {"math": ask_math, "vision": ask_vision}.get(suite)
+            if suite == "codegen":            # write everything first, then run the tests in the Docker sandbox
+                from . import sandbox
+                gen = HOME / "bench" / f"codegen-replies-{name}-{len(items)}.json"   # replies are reusable
+                replies = json.loads(gen.read_text(encoding="utf-8")) if gen.exists() else \
+                    [ask_codegen(url, it) for it in items]
+                gen.write_text(json.dumps(replies), encoding="utf-8")
+                programs = [codegen_program(it, r) for it, r in zip(items, replies)]   # assembled fresh every run
+                if not sandbox.docker():
+                    print(f"  {lang:3} {suite:9} generated {len(programs)} programs; start Docker (Linux containers) "
+                          f"and rerun to test them (saved in {gen})", flush=True)
+                    continue
+                ok = sum(r["ok"] for r in sandbox.run(programs, CODEGEN_TIMEOUT))
+                acc = round(100 * ok / len(items), 1)
+                res[f"{lang}/{suite}"] = {"acc": acc, "correct": ok, "n": len(items)}
+                print(f"  {lang:3} {suite:9} {acc:5.1f}%  ({ok}/{len(items)} pass the EvalPlus tests)", flush=True)
+                _save(name, {**res, "_meta": {"model": name, "seconds": round(time.time() - t0), "limit": limit}})
+                continue
+            check = {"math": ask_math, "code": ask_code, "vision": ask_vision}.get(suite)
             ok = sum(check(url, it) if check else ask(url, it) == it["ans"] for it in items)
             acc = round(100 * ok / len(items), 1)
             res[f"{lang}/{suite}"] = {"acc": acc, "correct": ok, "n": len(items)}

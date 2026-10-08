@@ -30,21 +30,23 @@ def _say(msg: str) -> None:
     print(f"[localllm] {msg}", flush=True)
 
 
-def _download(url: str, dest: Path, label: str) -> None:
-    """Resumable download with a one-line progress bar."""
+def _download(url: str, dest: Path, label: str, timeout: float = 60) -> None:
+    """Resumable download with a one-line progress bar. timeout is per connect/read: a stalled link raises."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
     done = tmp.stat().st_size if tmp.exists() else 0
     req = urllib.request.Request(url, headers={"Range": f"bytes={done}-"} if done else {})
-    with urllib.request.urlopen(req) as r, open(tmp, "ab") as f:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        done = done if r.status == 206 else 0           # a server that ignores Range sends the whole file again
         total = done + int(r.headers.get("Content-Length") or 0)
         t0, got = time.time(), 0
-        while chunk := r.read(1 << 22):
-            f.write(chunk); got += len(chunk)
-            if total:
-                pct = 100 * (done + got) / total
-                speed = got / max(time.time() - t0, 1e-3) / 2**20
-                print(f"\r  {label}: {pct:5.1f}% of {total / 2**30:.1f} GB  ({speed:.0f} MB/s)  ", end="", flush=True)
+        with open(tmp, "ab" if done else "wb") as f:
+            while chunk := r.read(1 << 22):
+                f.write(chunk); got += len(chunk)
+                if total:
+                    pct = 100 * (done + got) / total
+                    speed = got / max(time.time() - t0, 1e-3) / 2**20
+                    print(f"\r  {label}: {pct:5.1f}% of {total / 2**30:.1f} GB  ({speed:.0f} MB/s)  ", end="", flush=True)
     print()
     tmp.replace(dest)
 
@@ -132,7 +134,8 @@ def _lan(host: str | None, api_key: str | None, require_local: bool = False) -> 
 
 
 def _start(key: str | None, port: int, ctx: int, models: str | None = None, host: str | None = None,
-           api_key: str | None = None, require_local: bool = False, vision: bool = False):
+           api_key: str | None = None, require_local: bool = False, idle_min: float | None = None,
+           vision: bool = False):
     host, api_key, shown = _lan(host, api_key, require_local)
     trust = not require_local
     if shown != "127.0.0.1":
@@ -157,8 +160,11 @@ def _start(key: str | None, port: int, ctx: int, models: str | None = None, host
         resident = need <= dev["total_gb"]
         _say(f"all {len(keys)} models fit in VRAM together ({need:.1f} GB): no swaps" if resident else
              f"they need {need:.1f} GB together: one at a time, swapped only when another is clearly better")
+        from . import taskclf
+        clf = taskclf.Classifier(server)    # math/code/translate in any language; its server starts on the 1st message
         p = pool.Pool(keys, lambda k: _launch(k, server, dev, ctx, ram_free, vision), dev["total_gb"], ram_free, first,
-                      resident)
+                      resident, files=None if resident else {k: _model_path(k) for k in keys}, classifier=clf,
+                      idle_unload_s=pool.IDLE_UNLOAD_S if idle_min is None else idle_min * 60)
         return (_PoolProc(p, gateway.serve(p, host=host, port=port, model_name="localllm-auto", api_key=api_key,
                                             trust_loopback=trust)),
                 f"http://127.0.0.1:{port}")
@@ -218,7 +224,8 @@ def _launch(key: str, server, dev, ctx: int, ram_free: float, vision: bool = Fal
 
 def cmd_run(a) -> None:
     proc, url = _start(a.model, a.port, a.ctx, getattr(a, "models", None), a.host, a.api_key,
-                       getattr(a, "require_key_local", False), getattr(a, "vision", False))
+                       getattr(a, "require_key_local", False), idle_min=getattr(a, "idle_unload", None),
+                       vision=getattr(a, "vision", False))
     _say(f"ready. chat: {url}   API: {url}/v1 (OpenAI), {url}/v1/messages (Anthropic), {url}/api (Ollama), "
          f"{url}/v1beta (Gemini)   Ctrl+C to stop")
     if not a.no_browser:
@@ -237,7 +244,8 @@ def cmd_chat(a) -> None:
         return
     if a.url:
         sys.exit(f"[localllm] nothing is answering at {a.url}")
-    proc, url = _start(a.model, a.port, a.ctx, getattr(a, "models", None), vision=getattr(a, "vision", False))
+    proc, url = _start(a.model, a.port, a.ctx, getattr(a, "models", None),
+                       idle_min=getattr(a, "idle_unload", None), vision=getattr(a, "vision", False))
     try:
         chat.repl(url, a.model or "")
     finally:
@@ -335,7 +343,9 @@ def cmd_doctor(_a) -> None:
         acc = m["scores"][test]
         tl, suite = test.split("/")
         kind = {"global": "translated world-knowledge exam", "math": "grade-school math word problems",
-                "translate": "translation to/from English"}.get(
+                "translate": "translation to/from English",
+                "code": "predicting what Python code returns",
+                "codegen": "writing code that passes tests"}.get(
             suite, "real local school/licence exams")
         mark = "  <- your language" if tl == lang else ""
         unit = "chrF++ (0-100)" if suite == "translate" else "% correct"
@@ -405,6 +415,9 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--ctx", type=int, default=8192, help="context length in tokens")
     ap.add_argument("--no-browser", action="store_true")
+    idle = {"type": float, "metavar": "MIN", "help": "with --models: stop the models after MIN minutes without a "
+            "request (default 15, 0 = never); the next message loads them again"}
+    ap.add_argument("--idle-unload", **idle)
     ap.add_argument("--models", metavar="auto|A,B", help="smart routing: pick the best of these models per message, "
                     "lazy-loading one at a time (auto = every model that fits this GPU)")
     lan = [(("--host",), {"help": "listen address; 0.0.0.0 (IPv4) or :: (IPv6 and IPv4) = other devices on your "
@@ -429,14 +442,16 @@ def main() -> None:
     c = sub.add_parser("chat"); c.add_argument("model", nargs="?", choices=list(catalog.MODELS))
     c.add_argument("--url", help="chat with an already running OpenAI-compatible server instead")
     c.add_argument("--port", type=int, default=8080); c.add_argument("--ctx", type=int, default=8192)
-    c.add_argument("--models", metavar="auto|A,B"); c.add_argument("--vision", action="store_true", help=VISION_HELP)
+    c.add_argument("--models", metavar="auto|A,B"); c.add_argument("--idle-unload", **idle)
+    c.add_argument("--vision", action="store_true", help=VISION_HELP)
     c.set_defaults(fn=cmd_chat)
     r = sub.add_parser("route", help="show routing config, or --test a prompt local vs cloud")
     r.add_argument("--test", metavar="PROMPT"); r.add_argument("--port", type=int, default=8080)
     r.set_defaults(fn=cmd_route)
     s = sub.add_parser("serve"); s.add_argument("model", nargs="?", choices=list(catalog.MODELS))
     s.add_argument("--port", type=int, default=8080); s.add_argument("--ctx", type=int, default=8192)
-    s.add_argument("--models", metavar="auto|A,B"); s.add_argument("--vision", action="store_true", help=VISION_HELP)
+    s.add_argument("--models", metavar="auto|A,B"); s.add_argument("--idle-unload", **idle)
+    s.add_argument("--vision", action="store_true", help=VISION_HELP)
     for flags, kw in lan:
         s.add_argument(*flags, **kw)
     s.set_defaults(fn=cmd_serve)
@@ -444,8 +459,9 @@ def main() -> None:
     e.add_argument("--name", default="model"); e.add_argument("--limit", type=int, default=0)
     e.add_argument("--langs", help="comma-separated ISO codes, default: en + this PC's language")
     e.add_argument("--suites", default="global,regional",
-                   help="global,regional (knowledge), math (MGSM), translate (FLORES, chrF++), "
-                        "vision (MaXM image questions; the server needs a vision projector)")
+                   help="global,regional (knowledge), math (MGSM), translate (FLORES, chrF++), code (CRUXEval), "
+                        "codegen (EvalPlus, needs Docker), vision (MaXM image questions; the server needs a vision "
+                        "projector)")
     e.set_defaults(fn=cmd_eval)
     a = ap.parse_args()
     if a.fn is cmd_serve:

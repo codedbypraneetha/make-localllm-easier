@@ -1,0 +1,144 @@
+{"text": "ช่วยแนะนำที่เที่ยวเชียงใหม่ช่วงหน้าหนาวหน่อย", "label": "general", "lang": "th"}
+{"text": "ทำไมท้องฟ้าถึงเป็นสีฟ้า", "label": "general", "lang": "th"}
+{"text": "เขียนกลอนสั้นๆ เกี่ยวกับฝนตกให้หน่อย", "label": "general", "lang": "th"}
+{"text": "ปี 2024 มีการเลือกตั้งที่ไหนบ้าง", "label": "general", "lang": "th"}
+{"text": "ผมเกิดปี 1990 ตอนนี้ทำงานมา 10 ปีแล้ว ควรเปลี่ยนงานไหม", "label": "general", "lang": "th"}
+{"text": "Python กับ JavaScript ต่างกันยังไง อธิบายแบบคนไม่เคยเขียนโปรแกรม", "label": "general", "lang": "th"}
+{"text": "ช่วยร่างอีเมลขอลาป่วยถึงหัวหน้าหน่อย", "label": "general", "lang": "th"}
+{"text": "ร้านกาแฟเปิด 7 โมงถึง 2 ทุ่ม มีโปรอะไรน่าสนใจบ้าง", "label": "general", "lang": "th"}
+{"text": "ซื้อของ 3 ชิ้น ชิ้นละ 45 บาท จ่ายแบงค์ 500 ได้เงินทอนเท่าไร", "label": "math", "lang": "th"}
+{"text": "ถ้ารถวิ่ง 80 กิโลเมตรต่อชั่วโมง ใช้เวลากี่ชั่วโมงถึงจะไปได้ 300 กิโลเมตร", "label": "math", "lang": "th"}
+{"text": "แก้สมการ 3x + 7 = 22 ให้หน่อย", "label": "math", "lang": "th"}
+{"text": "ดอกเบี้ย 5% ต่อปี ฝาก 10,000 บาท 3 ปี แบบทบต้นได้เท่าไร", "label": "math", "lang": "th"}
+{"text": "ช่วยเขียนฟังก์ชัน Python หาค่าเฉลี่ยของลิสต์", "label": "code", "lang": "th"}
+{"text": "โค้ดนี้ error ว่า IndexError: list index out of range ต้องแก้ยังไง\nfor i in range(len(a)+1): print(a[i])", "label": "code", "lang": "th"}
+{"text": "เขียน SQL ดึงลูกค้าที่สั่งซื้อเกิน 5 ครั้ง", "label": "code", "lang": "th"}
+{"text": "ช่วยรีวิวโค้ด React component นี้ให้หน่อย\nfunction App(){ const [n,setN]=useState(0); return <button onClick={()=>setN(n+1)}>{n}</button> }", "label": "code", "lang": "th"}
+{"text": "แปลประโยคนี้เป็นภาษาอังกฤษ: พรุ่งนี้ฉันจะไปหาหมอ", "label": "translate", "lang": "th"}
+{"text": "\"See you next week\" ภาษาไทยพูดว่าอะไร", "label": "translate", "lang": "th"}
+{"text": "ช่วยแปลอีเมลนี้เป็นภาษาญี่ปุ่นแบบสุภาพ: ขอบคุณสำหรับการประชุมวันนี้ครับ", "label": "translate", "lang": "th"}
+{"text": "What's a good name for a golden retriever puppy?", "label": "general", "lang": "en"}
+{"text": "Explain the causes of World War I in simple terms.", "label": "general", "lang": "en"}
+{"text": "I have 2 kids and 3 dogs, how do I keep the house clean?", "label": "general", "lang": "en"}
+{"text": "Write a short story about a lighthouse keeper who finds a message in a bottle.", "label": "general", "lang": "en"}
+{"text": "Which is healthier, brown rice or quinoa?", "label": "general", "lang": "en"}
+{"text": "What is Rust and why do people like it?", "label": "general", "lang": "en"}
+{"text": "My flight is at 6:45 and I land at 10:20, what should I pack for a 3-day trip to Tokyo?", "label": "general", "lang": "en"}
+{"text": "Summarize the plot of Hamlet in three sentences.", "label": "general", "lang": "en"}
+{"text": "A train leaves at 3 pm going 60 mph. Another leaves at 4 pm going 80 mph. When does the second catch up?", "label": "math", "lang": "en"}
+{"text": "What is the derivative of x^3 * sin(x)?", "label": "math", "lang": "en"}
+{"text": "If I invest $2,000 at 7% annual interest compounded monthly, how much will I have after 5 years?", "label": "math", "lang": "en"}
+{"text": "What's 15% of 240?", "label": "math", "lang": "en"}
+{"text": "Probability of getting at least one six in four rolls of a die?", "label": "math", "lang": "en"}
+{"text": "Write a bash script that renames all .txt files in a folder to .md", "label": "code", "lang": "en"}
+{"text": "Why does this throw a NullPointerException?\nString s = null; System.out.println(s.length());", "label": "code", "lang": "en"}
+{"text": "Implement a binary search in Go.", "label": "code", "lang": "en"}
+{"text": "Convert this Python 2 code to Python 3: print 'hello'", "label": "code", "lang": "en"}
+{"text": "How do I center a div with CSS?", "label": "code", "lang": "en"}
+{"text": "Write a regex that matches US phone numbers.", "label": "code", "lang": "en"}
+{"text": "Translate 'Where is the train station?' into German.", "label": "translate", "lang": "en"}
+{"text": "How do you say 'thank you very much' in Japanese?", "label": "translate", "lang": "en"}
+{"text": "Can you translate this paragraph to Spanish? The meeting has been moved to Thursday afternoon.", "label": "translate", "lang": "en"}
+{"text": "What does 'carpe diem' mean in English?", "label": "translate", "lang": "en"}
+{"text": "北京有哪些值得去的博物馆？", "label": "general", "lang": "zh"}
+{"text": "给我写一首关于秋天的诗。", "label": "general", "lang": "zh"}
+{"text": "怎么提高睡眠质量？", "label": "general", "lang": "zh"}
+{"text": "2008年北京奥运会有什么意义？", "label": "general", "lang": "zh"}
+{"text": "一个长方形长12厘米，宽5厘米，面积是多少？", "label": "math", "lang": "zh"}
+{"text": "小王有30元，买了3支笔每支4元，还剩多少钱？", "label": "math", "lang": "zh"}
+{"text": "求解方程 x² - 5x + 6 = 0", "label": "math", "lang": "zh"}
+{"text": "用Python写一个读取CSV文件的函数", "label": "code", "lang": "zh"}
+{"text": "这段JavaScript为什么输出undefined？\nlet a; console.log(a);", "label": "code", "lang": "zh"}
+{"text": "帮我写一个快速排序的C++实现", "label": "code", "lang": "zh"}
+{"text": "把这句话翻译成英文：我们明天早上九点开会。", "label": "translate", "lang": "zh"}
+{"text": "“欢迎光临”用泰语怎么说？", "label": "translate", "lang": "zh"}
+{"text": "请把下面的日文翻译成中文：今日はいい天気ですね。", "label": "translate", "lang": "zh"}
+{"text": "京都でおすすめの紅葉スポットを教えて。", "label": "general", "lang": "ja"}
+{"text": "転職活動で気をつけることは何ですか？", "label": "general", "lang": "ja"}
+{"text": "猫が主人公の短い物語を書いてください。", "label": "general", "lang": "ja"}
+{"text": "りんごを3個で360円で買いました。1個あたりいくらですか？", "label": "math", "lang": "ja"}
+{"text": "時速45kmで2時間半走ると何km進みますか？", "label": "math", "lang": "ja"}
+{"text": "Pythonでフィボナッチ数列を出力する関数を書いて。", "label": "code", "lang": "ja"}
+{"text": "このSQLが遅い理由を教えて：SELECT * FROM orders WHERE YEAR(created_at)=2024;", "label": "code", "lang": "ja"}
+{"text": "「お疲れ様です」を英語に翻訳してください。", "label": "translate", "lang": "ja"}
+{"text": "次の文を韓国語に訳して：明日は雨が降るでしょう。", "label": "translate", "lang": "ja"}
+{"text": "¿Qué lugares recomiendas visitar en Lisboa?", "label": "general", "lang": "es"}
+{"text": "Escríbeme un poema sobre el mar.", "label": "general", "lang": "es"}
+{"text": "¿Cuál es la diferencia entre virus y bacteria?", "label": "general", "lang": "es"}
+{"text": "Si un pantalón cuesta 40 euros y tiene un 25% de descuento, ¿cuánto pago?", "label": "math", "lang": "es"}
+{"text": "Resuelve: 2x - 4 = 10", "label": "math", "lang": "es"}
+{"text": "Escribe una función en JavaScript que invierta una cadena.", "label": "code", "lang": "es"}
+{"text": "¿Por qué mi código Python da 'IndentationError'?", "label": "code", "lang": "es"}
+{"text": "Traduce al inglés: Me gustaría reservar una mesa para dos.", "label": "translate", "lang": "es"}
+{"text": "¿Cómo se dice 'buenos días' en francés?", "label": "translate", "lang": "es"}
+{"text": "Quels sont les meilleurs fromages français ?", "label": "general", "lang": "fr"}
+{"text": "Comment préparer un entretien d'embauche ?", "label": "general", "lang": "fr"}
+{"text": "Un rectangle a un périmètre de 30 cm et une longueur de 9 cm. Quelle est sa largeur ?", "label": "math", "lang": "fr"}
+{"text": "Écris une fonction Python qui vérifie si un nombre est premier.", "label": "code", "lang": "fr"}
+{"text": "Traduis en anglais : Je suis désolé pour le retard.", "label": "translate", "lang": "fr"}
+{"text": "Was ist der Unterschied zwischen Wetter und Klima?", "label": "general", "lang": "de"}
+{"text": "Schreib mir eine Geburtstagskarte für meine Oma.", "label": "general", "lang": "de"}
+{"text": "Ein Auto verbraucht 6 Liter auf 100 km. Wie viel für 450 km?", "label": "math", "lang": "de"}
+{"text": "Schreib ein Python-Skript, das alle Dateien in einem Ordner auflistet.", "label": "code", "lang": "de"}
+{"text": "Übersetze bitte ins Englische: Ich komme morgen etwas später.", "label": "translate", "lang": "de"}
+{"text": "भारत में घूमने के लिए सबसे अच्छी जगहें कौन सी हैं?", "label": "general", "lang": "hi"}
+{"text": "अच्छी नींद के लिए क्या करना चाहिए?", "label": "general", "lang": "hi"}
+{"text": "एक दुकानदार ने 500 रुपये की चीज़ 20% छूट पर बेची। बिक्री मूल्य क्या है?", "label": "math", "lang": "hi"}
+{"text": "Python में एक लिस्ट को सॉर्ट करने का कोड लिखिए।", "label": "code", "lang": "hi"}
+{"text": "इसका अंग्रेज़ी में अनुवाद करें: मुझे चाय पसंद है।", "label": "translate", "lang": "hi"}
+{"text": "ما هي أفضل طريقة لتعلم لغة جديدة؟", "label": "general", "lang": "ar"}
+{"text": "اكتب قصيدة قصيرة عن الصحراء.", "label": "general", "lang": "ar"}
+{"text": "اشترى أحمد 4 كتب بسعر 15 ريالاً للكتاب. كم دفع؟", "label": "math", "lang": "ar"}
+{"text": "اكتب دالة بايثون تحسب مضروب عدد.", "label": "code", "lang": "ar"}
+{"text": "ترجم إلى الإنجليزية: أين أقرب صيدلية؟", "label": "translate", "lang": "ar"}
+{"text": "서울에서 가볼 만한 카페 추천해 줘.", "label": "general", "lang": "ko"}
+{"text": "사과 5개가 2500원이면 사과 8개는 얼마예요?", "label": "math", "lang": "ko"}
+{"text": "자바스크립트로 배열의 중복을 제거하는 코드 작성해 줘.", "label": "code", "lang": "ko"}
+{"text": "이 문장을 영어로 번역해 줘: 오늘 정말 즐거웠어요.", "label": "translate", "lang": "ko"}
+{"text": "Món ăn nào nổi tiếng nhất ở Hà Nội?", "label": "general", "lang": "vi"}
+{"text": "Một lớp có 35 học sinh, 40% là nữ. Có bao nhiêu học sinh nam?", "label": "math", "lang": "vi"}
+{"text": "Viết hàm Python kiểm tra chuỗi palindrome.", "label": "code", "lang": "vi"}
+{"text": "Dịch sang tiếng Anh: Tôi đang học tiếng Thái.", "label": "translate", "lang": "vi"}
+{"text": "Apa tips menabung untuk mahasiswa?", "label": "general", "lang": "id"}
+{"text": "Harga 1 kg beras Rp12.000. Berapa harga 7,5 kg?", "label": "math", "lang": "id"}
+{"text": "Buatkan kode Python untuk membaca file JSON.", "label": "code", "lang": "id"}
+{"text": "Terjemahkan ke bahasa Inggris: Saya sudah makan siang.", "label": "translate", "lang": "id"}
+{"text": "Quais são os benefícios de correr todos os dias?", "label": "general", "lang": "pt"}
+{"text": "Se 3 operários fazem um muro em 12 dias, quantos dias 4 operários levam?", "label": "math", "lang": "pt"}
+{"text": "Escreva uma função em Java que some os elementos de um array.", "label": "code", "lang": "pt"}
+{"text": "Traduza para o inglês: Onde fica o banheiro?", "label": "translate", "lang": "pt"}
+{"text": "Какие книги стоит прочитать каждому?", "label": "general", "lang": "ru"}
+{"text": "В классе 28 учеников, четверть из них отличники. Сколько отличников?", "label": "math", "lang": "ru"}
+{"text": "Напиши функцию на Python для подсчёта слов в строке.", "label": "code", "lang": "ru"}
+{"text": "Переведи на английский: Я опаздываю на работу.", "label": "translate", "lang": "ru"}
+{"text": "Istanbul'da gezilecek yerler nereler?", "label": "general", "lang": "tr"}
+{"text": "Bir işçi günde 8 saat çalışıyor. 22 günde kaç saat çalışır?", "label": "math", "lang": "tr"}
+{"text": "Python'da bir sözlüğü değerlerine göre sıralayan kod yaz.", "label": "code", "lang": "tr"}
+{"text": "İngilizceye çevir: Yarın görüşürüz.", "label": "translate", "lang": "tr"}
+{"text": "พรุ่งนี้ประชุมกี่โมงนะ ช่วยเตือนผมด้วย", "label": "general", "lang": "th"}
+{"text": "สรุปข่าวเศรษฐกิจวันนี้ให้หน่อย", "label": "general", "lang": "th"}
+{"text": "ช่วยอธิบายว่า machine learning คืออะไร", "label": "general", "lang": "th"}
+{"text": "ราคาทองวันนี้ 41,250 บาท ถ้าซื้อ 2 บาทต้องจ่ายเท่าไร", "label": "math", "lang": "th"}
+{"text": "หาค่า x จาก 2^x = 64", "label": "math", "lang": "th"}
+{"text": "ช่วยแก้ bug ใน for loop นี้หน่อย ทำไมมันวนไม่จบ\nwhile i < 10: print(i)", "label": "code", "lang": "th"}
+{"text": "เขียน Dockerfile สำหรับแอป Node.js ให้หน่อย", "label": "code", "lang": "th"}
+{"text": "คำว่า \"สวัสดี\" ภาษาเกาหลีว่าอะไร", "label": "translate", "lang": "th"}
+{"text": "ช่วยแปลเพลงนี้เป็นไทย: Let it be, let it be, whisper words of wisdom", "label": "translate", "lang": "th"}
+{"text": "I scored 85, 92 and 78 on three tests. What's my average?", "label": "math", "lang": "en"}
+{"text": "Tell me a joke about programmers.", "label": "general", "lang": "en"}
+{"text": "What year did the Berlin Wall fall, and why?", "label": "general", "lang": "en"}
+{"text": "Refactor this function to be more readable:\ndef f(x):return [i*2 for i in x if i%2==0]", "label": "code", "lang": "en"}
+{"text": "Is 'je ne sais quoi' French? What does it translate to?", "label": "translate", "lang": "en"}
+{"text": "Write a cover letter for a junior data analyst position.", "label": "general", "lang": "en"}
+{"text": "How many seconds are in a leap year?", "label": "math", "lang": "en"}
+{"text": "Write unit tests for a function that adds two numbers, using pytest.", "label": "code", "lang": "en"}
+{"text": "我想学吉他，应该从哪里开始？", "label": "general", "lang": "zh"}
+{"text": "一辆车以每小时60公里的速度行驶了2.5小时，行驶了多少公里？", "label": "math", "lang": "zh"}
+{"text": "写一个Go语言的HTTP服务器示例", "label": "code", "lang": "zh"}
+{"text": "帮我把这段话翻译成法语：生日快乐，祝你一切顺利。", "label": "translate", "lang": "zh"}
+{"text": "日本の首都はどこですか？", "label": "general", "lang": "ja"}
+{"text": "Rustで所有権の仕組みを使ったサンプルコードを書いて。", "label": "code", "lang": "ja"}
+{"text": "¿Me ayudas a planear un viaje de 5 días a México?", "label": "general", "lang": "es"}
+{"text": "Calcula el área de un círculo de radio 7 cm.", "label": "math", "lang": "es"}
+{"text": "Mon code CSS ne s'applique pas, pourquoi ?\n.titre { color: red }", "label": "code", "lang": "fr"}
+{"text": "Comment dit-on 'bonne nuit' en italien ?", "label": "translate", "lang": "fr"}

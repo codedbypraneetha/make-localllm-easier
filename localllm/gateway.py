@@ -262,6 +262,11 @@ def openai_to_gemini(text: str, finish: str | None = None, usage: dict | None = 
     return d
 
 
+IDLE_NOTE = "the model was unloaded while idle to free the GPU; it loads again on your next message"
+IDLE_PAGE = ("<!doctype html><meta charset=utf-8><title>localllm</title><p style='font:16px sans-serif;margin:2em'>"
+             f"localllm: {IDLE_NOTE}. Send a message from your app or <code>localllm chat</code>, then reload.</p>")
+
+
 class ToolCalls:
     """Collects streamed OpenAI tool-call deltas (an index, then name and argument fragments) into whole calls."""
 
@@ -311,17 +316,25 @@ def error_body(api: str, msg: str, code: int = 400) -> dict:
 def make_handler(upstream, model_name: str, api_key: str | None = None, trust_loopback: bool = True):
     """`upstream` is a llama-server URL, or a pool.Pool that picks (and lazy-loads) a model per request.
     With `api_key`, every request from another machine must carry it (loopback clients too unless trust_loopback)."""
-    def local(body: dict):
-        return nullcontext((upstream, None)) if isinstance(upstream, str) else upstream.use(body)
+    def local(body: dict, stay: bool = False):
+        return nullcontext((upstream, None)) if isinstance(upstream, str) else upstream.use(body, stay=stay)
 
-    def base_url() -> str:
-        return upstream if isinstance(upstream, str) else upstream.url
+    def base_url(method: str) -> str | None:
+        """Where a non-chat request goes. A pool wakes for POSTs (work) but not for GETs (health checks, model lists,
+        polling pages): those get None while it is unloaded and must not reset its idle clock."""
+        if isinstance(upstream, str):
+            return upstream
+        return upstream.ensure_url() if method == "POST" else upstream.peek_url()
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def log_message(self, *a):
             pass
+
+        def _stay(self) -> bool:
+            """X-Localllm-Stay: 1 keeps the loaded model for this request (no swap)."""
+            return (self.headers.get("X-Localllm-Stay") or "").strip().lower() in ("1", "true", "yes")
 
         def _authorized(self) -> bool:
             """Strip ?key= from the path; check the key when one is required."""
@@ -377,12 +390,33 @@ def make_handler(upstream, model_name: str, api_key: str | None = None, trust_lo
                     hdrs, body = cloud.headers(self.path), cloud.adapt(body, self.path)
                     return self._send(method, cloud.url_base, body, hdrs, route_hdr, None)
                 req = json.loads(body or b"{}")
-                with local(req) as (url, model_hdr):
+                with local(req, self._stay()) as (url, model_hdr):
                     if has_image(req) and not vision_ok(url):
                         api = "anthropic" if self.path == "/v1/messages" else "openai"
                         return self._json(400, error_body(api, NO_VISION))
                     return self._send(method, url, body, hdrs, route_hdr, model_hdr)
-            self._send(method, base_url(), body, hdrs, route_hdr, None)
+            url = base_url(method)
+            if url is None:
+                return self._idle()
+            try:
+                self._send(method, url, body, hdrs, route_hdr, None)
+            except OSError:                             # URLError, or the connection dropped as the server stopped
+                if method != "GET" or isinstance(upstream, str) or upstream.peek_url() == url:
+                    raise
+                self._idle()                            # unloaded between the look and the request
+
+        def _idle(self):
+            """A GET while the pool has unloaded its model(s): answer here instead of loading one."""
+            if self.path == "/health":
+                return self._json(200, {"status": "ok", "model": "unloaded"})
+            if self.path == "/":
+                html = IDLE_PAGE.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(html)))
+                self.end_headers()
+                return self.wfile.write(html)
+            self._json(503, {"error": IDLE_NOTE}, {"Retry-After": "5"})
 
         def _send(self, method: str, target: str, body, hdrs: dict, route_hdr: str, model_hdr: str | None):
             fwd = {k: v for k, v in self.headers.items()          # our own key never leaves this gateway
@@ -408,6 +442,9 @@ def make_handler(upstream, model_name: str, api_key: str | None = None, trust_lo
         def do_GET(self):
             if not self._authorized() and self.path != "/":      # the chat page is static; its API calls need the key
                 return self._deny()
+            if self.path == "/v1/models" and not isinstance(upstream, str):   # the pool's names, without waking it
+                return self._json(200, {"object": "list", "data": [
+                    {"id": k, "object": "model", "owned_by": "localllm"} for k in upstream.keys]})
             if self.path == "/api/tags":
                 return self._json(200, {"models": [{"name": model_name, "model": model_name, "size": 0,
                                                     "details": {"format": "gguf"}}]})
@@ -433,7 +470,7 @@ def make_handler(upstream, model_name: str, api_key: str | None = None, trust_lo
             req = ollama_to_openai(self._body(), chat)
             stream = req["stream"]
             req["stream"] = True
-            with local(req) as (url, model_hdr):
+            with local(req, self._stay()) as (url, model_hdr):
                 if has_image(req) and not vision_ok(url):
                     return self._json(400, error_body("ollama", NO_VISION))
                 self._ollama_reply(_post(url + "/v1/chat/completions", req), chat, stream,
@@ -464,7 +501,7 @@ def make_handler(upstream, model_name: str, api_key: str | None = None, trust_lo
                 req = gemini_to_openai(self._body())
             except ValueError as e:
                 return self._json(400, error_body("gemini", str(e)))
-            with local(req) as (url, model_hdr):
+            with local(req, self._stay()) as (url, model_hdr):
                 if has_image(req) and not vision_ok(url):
                     return self._json(400, error_body("gemini", NO_VISION))
                 self._gemini_reply(url, req, stream, {"X-Localllm-Model": model_hdr} if model_hdr else None)
